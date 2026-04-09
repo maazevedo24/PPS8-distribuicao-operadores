@@ -218,6 +218,7 @@ export default function Resultados() {
               resultados={resultadosAtuais}
               operadores={operadores}
               operacoes={operacoes}
+              unidadeTempo={configAtual.possibilidade === 4 ? "s" : "min"}
               onDistribuicaoChange={handleDistribuicaoChange}
             />
           </TabsContent>

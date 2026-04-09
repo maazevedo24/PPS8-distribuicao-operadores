@@ -7,6 +7,7 @@ interface TabelaDistribuicaoProps {
   operadores: any[];
   operacoes: any[];
   onDistribuicaoChange?: (novaDistribuicao: DistribuicaoCarga[]) => void;
+  unidadeTempo?: "min" | "s";
 }
 
 type CellMatrix = { [opId: string]: { [operadorId: string]: string } };
@@ -64,6 +65,7 @@ export function TabelaDistribuicao({
   operadores,
   operacoes,
   onDistribuicaoChange,
+  unidadeTempo = "min",
 }: TabelaDistribuicaoProps) {
 
   const grupoMap = useMemo(() => {
@@ -85,17 +87,46 @@ export function TabelaDistribuicao({
     [operacoes]
   );
 
+  const unidadeTempoLabel = unidadeTempo === "s" ? "s" : "min";
+  const toDisplayTempo = useCallback(
+    (tempoMinutos: number) => (unidadeTempo === "s" ? tempoMinutos * 60 : tempoMinutos),
+    [unidadeTempo]
+  );
+  const toInternalTempo = useCallback(
+    (tempoDisplay: number) => (unidadeTempo === "s" ? tempoDisplay / 60 : tempoDisplay),
+    [unidadeTempo]
+  );
+  const formatTempo = useCallback(
+    (tempoDisplay: number) => (unidadeTempo === "s" ? tempoDisplay.toFixed(0) : tempoDisplay.toFixed(2)),
+    [unidadeTempo]
+  );
+
   const buildCells = useCallback((): CellMatrix => {
     const m: CellMatrix = {};
+    const operadoresPorOperacao: Record<string, number> = {};
+    operacoes.forEach((op: any) => {
+      operadoresPorOperacao[op.id] = opIds.reduce((count, oid) => {
+        const d = resultados.distribuicao.find((dist) => dist.operadorId === oid);
+        return d?.operacoes.includes(op.id) ? count + 1 : count;
+      }, 0);
+    });
+
     operacoes.forEach((op: any) => {
       m[op.id] = {};
       opIds.forEach((oid) => {
         const d = resultados.distribuicao.find((d) => d.operadorId === oid);
-        m[op.id][oid] = d?.operacoes.includes(op.id) ? String(op.tempo) : "";
+        if (!d?.operacoes.includes(op.id)) {
+          m[op.id][oid] = "";
+          return;
+        }
+
+        const qtdOperadores = Math.max(1, operadoresPorOperacao[op.id] || 1);
+        const tempoDivididoMin = op.tempo / qtdOperadores;
+        m[op.id][oid] = String(toDisplayTempo(tempoDivididoMin));
       });
     });
     return m;
-  }, [operacoes, opIds, resultados.distribuicao]);
+  }, [operacoes, opIds, resultados.distribuicao, toDisplayTempo]);
 
   const [cells, setCells]     = useState<CellMatrix>(buildCells);
   const [hist, setHist]       = useState<CellMatrix[]>([]);
@@ -119,13 +150,14 @@ export function TabelaDistribuicao({
         .map((op: any) => op.id);
       const carga = ops.reduce((s: number, opId: string) => {
         const op = operacoes.find((o: any) => o.id === opId);
-        return s + (op ? parseFloat(m[op.id]?.[oid] || "0") || 0 : 0);
+        const valorDisplay = op ? (parseFloat(m[op.id]?.[oid] || "0") || 0) : 0;
+        return s + toInternalTempo(valorDisplay);
       }, 0);
       const ex = resultados.distribuicao.find((d) => d.operadorId === oid);
       return { operadorId: oid, operacoes: ops, cargaHoraria: carga, ocupacao: ex?.ocupacao || 0, ciclosPorHora: carga > 0 ? 60 / carga : 0 };
     });
     onDistribuicaoChange?.(dist);
-  }, [opIds, operacoes, resultados.distribuicao, onDistribuicaoChange]);
+  }, [opIds, operacoes, resultados.distribuicao, onDistribuicaoChange, toInternalTempo]);
 
   const changeCell = (opId: string, oid: string, raw: string) => {
     const val = raw.replace(",", ".").replace(/[^0-9.]/g, "");
@@ -155,7 +187,9 @@ export function TabelaDistribuicao({
       const v = parseFloat(cells[op.id]?.[oid] || "");
       return s + (isNaN(v) ? 0 : v);
     }, 0);
-    return Math.abs(sum - op.tempo) < 0.005;
+    const opTempoDisplay = toDisplayTempo(op.tempo);
+    const tolerancia = unidadeTempo === "s" ? 0.5 : 0.005;
+    return Math.abs(sum - opTempoDisplay) < tolerancia;
   };
 
   const colTotals = useMemo(() => {
@@ -170,6 +204,7 @@ export function TabelaDistribuicao({
   }, [cells, opIds, opsOrdenadas]);
 
   const totalOcup   = opsOrdenadas.reduce((s: number, op: any) => s + op.tempo, 0);
+  const totalOcupDisplay = toDisplayTempo(totalOcup);
   const balancedCnt = opsOrdenadas.filter(rowOk).length;
   const fmtId       = (id: string) => id.replace(/^OP0*/, "OP ");
 
@@ -184,9 +219,9 @@ export function TabelaDistribuicao({
             { label: "Operadores",  value: String(resultados.numeroOperadores) },
             { label: "Operações",   value: String(opsOrdenadas.length) },
             { label: "Balanceadas", value: `${balancedCnt} / ${opsOrdenadas.length}` },
-            { label: "OCUP total",  value: `${totalOcup.toFixed(2)} min` },
-            { label: "Takt",        value: `${resultados.taktTime.toFixed(2)} min` },
-            { label: "Ciclo",       value: `${resultados.tempoCiclo.toFixed(2)} min` },
+            { label: "OCUP total",  value: `${formatTempo(totalOcupDisplay)} ${unidadeTempoLabel}` },
+            { label: "Takt",        value: `${formatTempo(toDisplayTempo(resultados.taktTime))} ${unidadeTempoLabel}` },
+            { label: "Ciclo",       value: `${formatTempo(toDisplayTempo(resultados.tempoCiclo))} ${unidadeTempoLabel}` },
           ].map((k, i) => (
             <div key={i} className="flex items-center gap-1.5">
               <span className="text-[11px] text-gray-400">{k.label}</span>
@@ -248,7 +283,7 @@ export function TabelaDistribuicao({
               <th style={thStyle(L_NOM)}>Operação</th>
               {/* OCUP */}
               <th style={thStyle(L_OCUP, { textAlign: "center", paddingLeft: 0, color: "#2563eb", borderRight: "2px solid #e5e7eb" })}>
-                OCUP (min)
+                OCUP ({unidadeTempoLabel})
               </th>
               {/* Operadores */}
               {opIds.map((oid) => (
@@ -279,7 +314,7 @@ export function TabelaDistribuicao({
                 subtotal →
               </td>
               <td style={{ position: "sticky", left: L_OCUP, zIndex: 11, background: "#eff6ff", color: "#2563eb", fontSize: 11, fontWeight: 700, fontFamily: "monospace", textAlign: "center", borderBottom: "1px solid #e5e7eb", borderRight: "2px solid #e5e7eb" }}>
-                {totalOcup.toFixed(2)}
+                {formatTempo(totalOcupDisplay)}
               </td>
               {opIds.map((oid) => {
                 const t = colTotals[oid];
@@ -297,7 +332,7 @@ export function TabelaDistribuicao({
                       borderRight: "1px solid #f3f4f6",
                     }}
                   >
-                    {t > 0 ? t.toFixed(2) : "—"}
+                    {t > 0 ? formatTempo(t) : "—"}
                   </td>
                 );
               })}
@@ -376,14 +411,16 @@ export function TabelaDistribuicao({
                         }}
                       >
                         <CheckCheck style={{ width: 11, height: 11, strokeWidth: 2.5 }} />
-                        {op.tempo.toFixed(2)}
+                        {formatTempo(toDisplayTempo(op.tempo))}
                         {locked
                           ? <Lock style={{ width: 9, height: 9, opacity: 0.6 }} />
                           : <LockOpen style={{ width: 9, height: 9, opacity: 0.4 }} />
                         }
                       </button>
                     ) : (
-                      <span style={{ display: "block", lineHeight: `${ROW_H}px` }}>{op.tempo.toFixed(2)}</span>
+                      <span style={{ display: "block", lineHeight: `${ROW_H}px` }}>
+                        {formatTempo(toDisplayTempo(op.tempo))}
+                      </span>
                     )}
                   </td>
 
@@ -453,7 +490,7 @@ export function TabelaDistribuicao({
                               userSelect: "none",
                             }}
                           >
-                            {hasVal ? parseFloat(val).toFixed(2) : "·"}
+                            {hasVal ? formatTempo(parseFloat(val)) : "·"}
                           </span>
                         )}
                       </td>
@@ -472,7 +509,7 @@ export function TabelaDistribuicao({
               <td style={{ position: "sticky", left: L_MAQ, zIndex: 21, background: "#f9fafb", borderRight: "1px solid #e5e7eb", color: "#6b7280", fontSize: 10, fontWeight: 600, paddingLeft: 10 }}>Total</td>
               <td style={{ position: "sticky", left: L_NOM, zIndex: 21, background: "#f9fafb", borderRight: "1px solid #e5e7eb" }} />
               <td style={{ position: "sticky", left: L_OCUP, zIndex: 21, background: "#eff6ff", color: "#2563eb", fontSize: 11, fontWeight: 700, fontFamily: "monospace", textAlign: "center", borderRight: "2px solid #e5e7eb" }}>
-                {totalOcup.toFixed(2)}
+                {formatTempo(totalOcupDisplay)}
               </td>
               {opIds.map((oid) => {
                 const t = colTotals[oid];
@@ -489,7 +526,7 @@ export function TabelaDistribuicao({
                       borderRight: "1px solid #e5e7eb",
                     }}
                   >
-                    {t > 0 ? t.toFixed(2) : "—"}
+                    {t > 0 ? formatTempo(t) : "—"}
                   </td>
                 );
               })}

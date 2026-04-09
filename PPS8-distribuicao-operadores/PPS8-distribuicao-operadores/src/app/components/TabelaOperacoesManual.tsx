@@ -82,7 +82,10 @@ export function TabelaOperacoesManual({
       const newOps = [...localOps];
       const op = { ...newOps[rowIndex] };
 
-      if (field === "tempo" || field === "largura") {
+      if (field === "tempo") {
+        // O utilizador edita em segundos; internamente guardamos em minutos.
+        op[field] = (parseFloat(value) || 0) / 60;
+      } else if (field === "largura") {
         op[field] = parseFloat(value) || 0;
       } else if (field === "sequencia") {
         op[field] = parseInt(value) || rowIndex + 1;
@@ -244,20 +247,28 @@ export function TabelaOperacoesManual({
 
       // ── All other fields
       const value = op[field as keyof Operacao];
+      const displayNumericValue =
+        field === "tempo" && typeof value === "number" ? value * 60 : value;
       const displayValue =
-        typeof value === "number"
-          ? value.toFixed(field === "tempo" ? 2 : 0)
+        typeof displayNumericValue === "number"
+          ? displayNumericValue.toFixed(field === "tempo" ? 0 : 0)
           : (value as string) || "";
 
       if (isEditing) {
+        const inputValue =
+          field === "tempo" && typeof value === "number"
+            ? Math.round(value * 60)
+            : typeof value === "number"
+            ? value
+            : value || "";
         return (
           <input
             autoFocus
             type={
               field === "tempo" || field === "largura" ? "number" : "text"
             }
-            step={field === "tempo" ? "0.01" : "1"}
-            value={typeof value === "number" ? value : value || ""}
+            step={field === "tempo" ? "1" : "1"}
+            value={inputValue}
             onChange={(e) =>
               handleCellChange(rowIndex, field as keyof Operacao, e.target.value)
             }
@@ -293,7 +304,7 @@ export function TabelaOperacoesManual({
     ]
   );
 
-  const totalTempo = localOps.reduce((sum, op) => sum + op.tempo, 0);
+  const totalTempoSegundos = localOps.reduce((sum, op) => sum + op.tempo * 60, 0);
   const totalAlocadas = localOps.filter(
     (op) => (localOps_operador[op.id] || "").trim() !== ""
   ).length;
@@ -310,7 +321,7 @@ export function TabelaOperacoesManual({
           <span className="text-xs text-gray-500">
             Tempo total:{" "}
             <span className="font-mono font-semibold text-gray-700">
-              {totalTempo.toFixed(2)} min
+              {totalTempoSegundos.toFixed(0)} s
             </span>
           </span>
           <span className="flex items-center gap-1 text-xs text-gray-500">
@@ -362,7 +373,7 @@ export function TabelaOperacoesManual({
                 "Seq",
                 "ID",
                 "Operação",
-                "Tempo (min)",
+                "Tempo (s)",
                 "Máquina",
                 "Máquina 2",
                 "Largura",
@@ -459,7 +470,7 @@ export function TabelaOperacoesManual({
                 </td>
                 <td className="p-2 border-l border-gray-200">
                   <span className="text-xs font-mono font-bold text-blue-700">
-                    {totalTempo.toFixed(2)} min
+                    {totalTempoSegundos.toFixed(0)} s
                   </span>
                 </td>
                 <td colSpan={6} className="border-l border-gray-200 p-2">

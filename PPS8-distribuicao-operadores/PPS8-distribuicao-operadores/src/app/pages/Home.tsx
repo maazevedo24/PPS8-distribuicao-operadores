@@ -308,14 +308,16 @@ export default function Home() {
 
         for (const op of operacoesManual) {
           const operadoresAtribuidos = atribuicoesManual[op.id] || [];
+          const tempoTotalSegundos = op.tempo * 60;
           if (operadoresAtribuidos.length > 0) {
+            const tempoPorOperadorSegundos = tempoTotalSegundos / operadoresAtribuidos.length;
             for (const operadorId of operadoresAtribuidos) {
               assignments.push({
                 machine_name: op.tipoMaquina || "",
                 operation_code: op.id,
                 operation_name: op.nome,
                 operator_id: operadorId,
-                time_seconds: op.tempo * 60,
+                time_seconds: tempoPorOperadorSegundos,
               });
             }
           } else {
@@ -324,7 +326,7 @@ export default function Home() {
               operation_code: op.id,
               operation_name: op.nome,
               operator_id: "",
-              time_seconds: op.tempo * 60,
+              time_seconds: tempoTotalSegundos,
             });
           }
         }
@@ -344,29 +346,28 @@ export default function Home() {
         const perdas = NaN; // não disponível neste modo
         const numeroOperadores = r.num_operators ?? r.numero_operadores ?? r.numeroOperadores ?? new Set(assignments.map((a) => a.operator_id).filter(Boolean)).size;
 
-        // Construir distribuicao a partir da resposta ou dos assignments
-        type DistItem = { operadorId: string; operacoes: string[]; cargaHoraria: number; ocupacao: number; ciclosPorHora: number };
-        let distribuicao: DistItem[] = [];
-        if (Array.isArray(r.distribuicao)) {
-          distribuicao = r.distribuicao;
-        } else if (Array.isArray(r.distribution)) {
-          distribuicao = r.distribution;
-        } else {
-          // Construir manualmente a partir dos assignments
-          const mapa: Record<string, { operacoes: string[]; tempoTotal: number }> = {};
-          for (const a of assignments) {
-            if (!mapa[a.operator_id]) mapa[a.operator_id] = { operacoes: [], tempoTotal: 0 };
-            mapa[a.operator_id].operacoes.push(a.operation_name);
-            mapa[a.operator_id].tempoTotal += a.time_seconds / 60;
-          }
-          distribuicao = Object.entries(mapa).map(([operadorId, dados]) => ({
-            operadorId,
-            operacoes: dados.operacoes,
-            cargaHoraria: dados.tempoTotal,
-            ocupacao: tempoCiclo > 0 ? (dados.tempoTotal / tempoCiclo) * 100 : 0,
-            ciclosPorHora: dados.tempoTotal > 0 ? 60 / dados.tempoTotal : 0,
-          }));
+        // Construir distribuicao por operador a partir dos assignments enviados (por operação)
+        type DistItem = {
+          operadorId: string;
+          operacoes: string[];
+          cargaHoraria: number;
+          ocupacao: number;
+          ciclosPorHora: number;
+        };
+        const mapa: Record<string, { operacoes: Set<string>; tempoTotal: number }> = {};
+        for (const a of assignments) {
+          if (!a.operator_id) continue;
+          if (!mapa[a.operator_id]) mapa[a.operator_id] = { operacoes: new Set(), tempoTotal: 0 };
+          mapa[a.operator_id].operacoes.add(a.operation_code);
+          mapa[a.operator_id].tempoTotal += a.time_seconds / 60;
         }
+        const distribuicao: DistItem[] = Object.entries(mapa).map(([operadorId, dados]) => ({
+          operadorId,
+          operacoes: Array.from(dados.operacoes),
+          cargaHoraria: dados.tempoTotal,
+          ocupacao: tempoCiclo > 0 ? (dados.tempoTotal / tempoCiclo) * 100 : 0,
+          ciclosPorHora: dados.tempoTotal > 0 ? 60 / dados.tempoTotal : 0,
+        }));
 
         const resultadosCustom = {
           distribuicao,
