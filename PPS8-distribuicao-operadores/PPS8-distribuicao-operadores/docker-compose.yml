@@ -1,0 +1,15 @@
+services:
+  pps8-operators-webapp:
+    container_name: pps8-operators-webapp
+    build:
+      context: .
+    image: pps8-operators-webapp:latest
+    ports:
+      - "3000"
+    restart: always
+    networks:
+      - common_network
+
+networks:
+  common_network:
+    external: true
