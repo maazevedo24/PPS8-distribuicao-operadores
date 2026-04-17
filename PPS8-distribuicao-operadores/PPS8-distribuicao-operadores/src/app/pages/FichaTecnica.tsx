@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Produto, Operacao } from "../types";
 import { produtosMock, operadoresMock } from "../data/mock";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
@@ -6,6 +6,13 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Badge } from "../components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -36,9 +43,120 @@ import {
 } from "lucide-react";
 import { AtribuicaoManual } from "../components/AtribuicaoManual";
 import * as XLSX from "xlsx";
+import axios from "axios";
+
+const API_BASE_URL =
+  ((import.meta as unknown as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL as string | undefined) ||
+  "http://192.168.54.202:7860/api";
+
+type ApiRecord = Record<string, any>;
+
+const ensureArray = (value: unknown): ApiRecord[] => {
+  if (Array.isArray(value)) return value as ApiRecord[];
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const nestedArray = Object.values(record).find((entry) => Array.isArray(entry));
+    if (Array.isArray(nestedArray)) return nestedArray as ApiRecord[];
+  }
+  return [];
+};
+
+const pickString = (obj: ApiRecord, keys: string[]): string => {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return "";
+};
+
+const pickNumber = (obj: ApiRecord, keys: string[]): number | null => {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value.replace(",", "."));
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+};
+
+const mapApiOperation = (raw: ApiRecord, index: number): Operacao =>
+  ({
+    id:
+      pickString(raw, ["operation_code", "operation_id", "id", "code"]) ||
+      `OP${String(index + 1).padStart(3, "0")}`,
+    nome:
+      pickString(raw, ["operation_name", "name", "nome", "description", "descricao"]) ||
+      `Operacao ${index + 1}`,
+    tempo:
+      pickNumber(raw, ["time_minutes", "tempo_minutos", "tempo", "minutes"]) ??
+      ((pickNumber(raw, ["time_seconds", "tempo_segundos", "seconds"]) || 0) / 60),
+    tipoMaquina: pickString(raw, ["machine_name", "machine_type", "tipo_maquina", "tipoMaquina"]),
+    sequencia:
+      pickNumber(raw, ["sequence", "sequencia", "seq", "order"]) ?? index + 1,
+  }) as Operacao;
+
+const mapApiTaskToProduto = (raw: ApiRecord, index: number, familyId: string): Produto => {
+  const taskId =
+    pickString(raw, ["task_id", "task_code", "id", "code"]) ||
+    `${familyId}-TASK-${String(index + 1).padStart(3, "0")}`;
+  const taskName =
+    pickString(raw, ["task_name", "name", "nome", "description", "descricao"]) ||
+    `Ficha ${index + 1}`;
+
+  const operations = ensureArray(
+    raw.operations ??
+      raw.operacoes ??
+      raw.steps ??
+      raw.sequence ??
+      raw.gama_operatoria
+  ).map((operation, operationIndex) => mapApiOperation(operation, operationIndex));
+
+  const numOperations =
+    pickNumber(raw, ["num_operations", "numero_operacoes", "operations_count"]) ??
+    operations.length;
+  const numCapableOperators = pickNumber(raw, [
+    "num_capable_operators",
+    "numero_operadores_disponiveis",
+  ]);
+  const numDistinctMachines = pickNumber(raw, [
+    "num_distinct_machines",
+    "numero_maquinas_distintas",
+  ]);
+
+  const indicators = [
+    numOperations != null ? `${numOperations} ops` : null,
+    numCapableOperators != null ? `${numCapableOperators} op disponiveis` : null,
+    numDistinctMachines != null ? `${numDistinctMachines} maquinas` : null,
+  ].filter(Boolean);
+
+  const today = new Date().toISOString().split("T")[0];
+
+  return {
+    id: taskId,
+    nome: taskName,
+    referencia:
+      pickString(raw, ["reference", "referencia", "task_reference", "task_code"]) || taskId,
+    cliente: pickString(raw, ["client", "cliente"]),
+    descricao:
+      pickString(raw, ["notes", "observacoes", "description", "descricao"]) ||
+      (indicators.length ? indicators.join(" | ") : `Ficha tecnica da familia ${familyId}`),
+    operacoes: operations,
+    dataCriacao: pickString(raw, ["created_at", "creation_date", "data_criacao"]) || today,
+    dataModificacao:
+      pickString(raw, ["updated_at", "modified_at", "data_modificacao"]) || today,
+  };
+};
+
+interface FamilyOption {
+  id: string;
+  label: string;
+}
 
 export default function FichaTecnica() {
-  const [produtos, setProdutos] = useState<Produto[]>(produtosMock);
+  const [produtos, setProdutos] = useState<Produto[]>([]);
   const [produtoSelecionado, setProdutoSelecionado] = useState<string | null>(null);
   const [showNovoProduto, setShowNovoProduto] = useState(false);
   const [showNovaOperacao, setShowNovaOperacao] = useState(false);
@@ -49,6 +167,11 @@ export default function FichaTecnica() {
   const [importPreview, setImportPreview] = useState<Operacao[] | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [showImportDialog, setShowImportDialog] = useState(false);
+  const [familias, setFamilias] = useState<FamilyOption[]>([]);
+  const [grupoArtigoSelecionado, setGrupoArtigoSelecionado] = useState<string>("");
+  const [loadingFamilias, setLoadingFamilias] = useState(false);
+  const [loadingFichas, setLoadingFichas] = useState(false);
+  const [erroApi, setErroApi] = useState<string | null>(null);
 
   const operadores = operadoresMock;
 
@@ -69,10 +192,84 @@ export default function FichaTecnica() {
 
   const produto = produtos.find((p) => p.id === produtoSelecionado);
 
+  useEffect(() => {
+    const carregarFamilias = async () => {
+      setLoadingFamilias(true);
+      setErroApi(null);
+      try {
+        const resposta = await axios.get(`${API_BASE_URL}/families/`);
+        const families = ensureArray(resposta.data).map((family, index) => {
+          const id =
+            pickString(family, ["family_id", "id", "code", "reference"]) ||
+            `FAM${String(index + 1).padStart(3, "0")}`;
+          const name = pickString(family, ["family_name", "name", "nome"]) || id;
+          const reference = pickString(family, ["reference", "referencia"]);
+          return {
+            id,
+            label: reference ? `${name} (${reference})` : name,
+          };
+        });
+
+        if (families.length === 0) {
+          throw new Error("Sem familias devolvidas pela API");
+        }
+
+        setFamilias(families);
+        setGrupoArtigoSelecionado((current) => current || families[0].id);
+      } catch (error) {
+        console.error("Erro ao carregar familias:", error);
+        setErroApi("Nao foi possivel carregar familias da API. A usar dados locais.");
+        const fallbackFamilies = produtosMock.map((family) => ({
+          id: family.id,
+          label: family.nome,
+        }));
+        setFamilias(fallbackFamilies);
+        setGrupoArtigoSelecionado((current) => current || fallbackFamilies[0]?.id || "");
+      } finally {
+        setLoadingFamilias(false);
+      }
+    };
+
+    carregarFamilias();
+  }, []);
+
+  useEffect(() => {
+    if (!grupoArtigoSelecionado) return;
+
+    const carregarFichasDaFamilia = async () => {
+      setLoadingFichas(true);
+      setErroApi(null);
+      try {
+        const resposta = await axios.get(
+          `${API_BASE_URL}/families/${encodeURIComponent(grupoArtigoSelecionado)}/tasks`
+        );
+        const tasks = ensureArray(resposta.data);
+        const fichas = tasks.map((task, index) =>
+          mapApiTaskToProduto(task, index, grupoArtigoSelecionado)
+        );
+
+        setProdutos(fichas);
+        setProdutoSelecionado((anterior) =>
+          fichas.some((ficha) => ficha.id === anterior) ? anterior : fichas[0]?.id || null
+        );
+      } catch (error) {
+        console.error("Erro ao carregar fichas da familia:", error);
+        setErroApi("Nao foi possivel carregar fichas tecnicas da familia selecionada.");
+        const fallback = produtosMock.filter((p) => p.id === grupoArtigoSelecionado);
+        setProdutos(fallback);
+        setProdutoSelecionado(fallback[0]?.id || null);
+      } finally {
+        setLoadingFichas(false);
+      }
+    };
+
+    carregarFichasDaFamilia();
+  }, [grupoArtigoSelecionado]);
+
   const handleCriarProduto = () => {
     if (!novoProduto.nome || !novoProduto.referencia) return;
     const newProd: Produto = {
-      id: `PROD${String(produtos.length + 1).padStart(3, "0")}`,
+      id: `${grupoArtigoSelecionado || "LOCAL"}-FT${String(produtos.length + 1).padStart(3, "0")}`,
       nome: novoProduto.nome,
       referencia: novoProduto.referencia,
       cliente: novoProduto.cliente,
@@ -378,6 +575,73 @@ export default function FichaTecnica() {
         </div>
       )}
 
+      {erroApi && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-sm flex items-center gap-2 text-amber-700 text-sm">
+          <AlertTriangle className="w-4 h-4" />
+          {erroApi}
+        </div>
+      )}
+
+      <Card className="shadow-sm border border-gray-200 rounded-sm bg-white">
+        <CardContent className="p-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold uppercase text-gray-600">
+                Grupo de Artigo
+              </Label>
+              <Select
+                value={grupoArtigoSelecionado || undefined}
+                onValueChange={setGrupoArtigoSelecionado}
+                disabled={loadingFamilias || familias.length === 0}
+              >
+                <SelectTrigger className="rounded-sm text-sm">
+                  <SelectValue
+                    placeholder={loadingFamilias ? "A carregar grupos..." : "Selecione um grupo"}
+                  />
+                </SelectTrigger>
+                <SelectContent className="rounded-sm">
+                  {familias.map((familia) => (
+                    <SelectItem key={familia.id} value={familia.id} className="text-sm">
+                      {familia.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold uppercase text-gray-600">
+                Ficha Tecnica
+              </Label>
+              <Select
+                value={produtoSelecionado || undefined}
+                onValueChange={setProdutoSelecionado}
+                disabled={!grupoArtigoSelecionado || loadingFichas || produtos.length === 0}
+              >
+                <SelectTrigger className="rounded-sm text-sm">
+                  <SelectValue
+                    placeholder={
+                      loadingFichas
+                        ? "A carregar fichas..."
+                        : "Selecione uma ficha tecnica"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent className="rounded-sm">
+                  {produtos.map((prod) => (
+                    <SelectItem key={prod.id} value={prod.id} className="text-sm">
+                      <span className="font-mono text-xs text-gray-500 mr-2">{prod.referencia}</span>
+                      {prod.nome}
+                      <span className="text-gray-400 ml-2">({prod.operacoes.length} ops)</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Lista de Produtos (sidebar) */}
         <div className="lg:col-span-1 space-y-3">
@@ -385,7 +649,7 @@ export default function FichaTecnica() {
             <CardHeader className="border-b border-gray-200 pb-3">
               <CardTitle className="flex items-center gap-2 text-sm font-semibold text-gray-900">
                 <Package className="w-4 h-4 text-blue-600" />
-                Produtos ({produtos.length})
+                Fichas Tecnicas ({produtos.length})
               </CardTitle>
             </CardHeader>
             <CardContent className="p-3 space-y-2">
