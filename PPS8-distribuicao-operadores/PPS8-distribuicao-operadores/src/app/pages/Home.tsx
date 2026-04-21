@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Operador, Operacao, ConfiguracaoDistribuicao } from "../types";
+import { Operador, Operacao, ConfiguracaoDistribuicao, Produto } from "../types";
 import { useNavigate } from "react-router";
 import { Button } from "../components/ui/button";
 import { Calculator, Users, Package, Factory, ChevronDown, Edit3 } from "lucide-react";
@@ -12,6 +12,7 @@ import { calcularBalanceamento } from "../utils/balanceamento";
 import { salvarHistorico, obterHistorico } from "../utils/historico";
 import { useStorage } from "../contexts/StorageContext";
 import axios from "axios";
+import { Label } from "../components/ui/label";
 import {
   Select,
   SelectContent,
@@ -39,6 +40,111 @@ const layoutPadrao: LayoutConfig = {
   permitirRetrocesso: false,
   permitirCruzamento: true,
   restricoes: [],
+};
+
+// ─── API Configuration ────────────────────────────────────────────────────────
+
+const API_BASE_URL =
+  ((import.meta as unknown as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL as string | undefined) ||
+  "http://192.168.54.202:7860/api";
+
+// ─── Types and Helpers ────────────────────────────────────────────────────────
+
+interface FamilyOption {
+  id: string;
+  label: string;
+}
+
+type ApiRecord = Record<string, any>;
+
+const ensureArray = (value: unknown): ApiRecord[] => {
+  if (Array.isArray(value)) return value as ApiRecord[];
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const nestedArray = Object.values(record).find((entry) => Array.isArray(entry));
+    if (Array.isArray(nestedArray)) return nestedArray as ApiRecord[];
+  }
+  return [];
+};
+
+const pickString = (obj: ApiRecord, keys: string[]): string => {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return "";
+};
+
+const pickNumber = (obj: ApiRecord, keys: string[]): number | null => {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value.replace(",", "."));
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+};
+
+const pickBoolean = (obj: ApiRecord, keys: string[]): boolean | undefined => {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return value !== 0;
+    if (typeof value === "string" && value.trim()) {
+      const normalized = value.trim().toLowerCase();
+      if (["true", "1", "yes", "sim"].includes(normalized)) return true;
+      if (["false", "0", "no", "nao", "não"].includes(normalized)) return false;
+    }
+  }
+  return undefined;
+};
+
+const ensureRecord = (value: unknown): ApiRecord | null => {
+  if (Array.isArray(value)) {
+    return (value.find((entry) => entry && typeof entry === "object") as ApiRecord | undefined) || null;
+  }
+  if (value && typeof value === "object") {
+    const record = value as ApiRecord;
+    const hasDirectKeys = ["code","id","name","description","operations","operacoes","task_id","task_code","family_id"].some((key) => key in record);
+    if (hasDirectKeys) return record;
+    const nestedRecord = Object.values(record).find((entry) => entry && typeof entry === "object" && !Array.isArray(entry));
+    if (nestedRecord && typeof nestedRecord === "object") return nestedRecord as ApiRecord;
+  }
+  return null;
+};
+
+const mapApiOperation = (raw: ApiRecord, index: number): Operacao =>
+  (() => {
+    const timeMinutes = pickNumber(raw, ["time_min","time_minutes","tempo_minutos","tempo","minutes"]);
+    const timeCmin = pickNumber(raw, ["time_cmin","tempo_cmin","cmin"]);
+    return {
+      id: pickString(raw, ["operation_code","operation_id","id","code"]) || `OP${String(index + 1).padStart(3, "0")}`,
+      nome: pickString(raw, ["operation_name","name","nome","designation","description","descricao"]) || `Operacao ${index + 1}`,
+      tempo: timeMinutes ?? (timeCmin != null ? timeCmin / 100 : null) ?? ((pickNumber(raw, ["time_seconds","tempo_segundos","seconds"]) || 0) / 60),
+      tipoMaquina: pickString(raw, ["machine_name","machine_type","tipo_maquina","tipoMaquina"]),
+      sequencia: pickNumber(raw, ["sequence_order","sequence","sequencia","seq","order"]) ?? index + 1,
+      critica: pickBoolean(raw, ["is_critical","critica"]),
+    } as Operacao;
+  })();
+
+const mapApiTaskToProduto = (raw: ApiRecord, index: number, familyId: string): Produto => {
+  const taskId = pickString(raw, ["task_id","task_code","id","code"]) || `${familyId}-TASK-${String(index + 1).padStart(3, "0")}`;
+  const taskName = pickString(raw, ["task_name","name","nome","description","descricao"]) || `Ficha ${index + 1}`;
+  const operations = ensureArray(raw.operations ?? raw.operacoes ?? raw.steps ?? raw.sequence ?? raw.gama_operatoria).map((op, i) => mapApiOperation(op, i));
+  const today = new Date().toISOString().split("T")[0];
+  return {
+    id: taskId,
+    nome: taskName,
+    referencia: pickString(raw, ["reference","referencia","task_reference","task_code"]) || taskId,
+    cliente: pickString(raw, ["client","cliente"]),
+    descricao: pickString(raw, ["notes","observacoes","description","descricao"]) || `Ficha tecnica da familia ${familyId}`,
+    operacoes: operations,
+    dataCriacao: pickString(raw, ["created_at","creation_date","data_criacao"]) || today,
+    dataModificacao: pickString(raw, ["updated_at","modified_at","data_modificacao"]) || today,
+  };
 };
 
 function criarUnidadePadrao(operadores: Operador[]) {
@@ -107,6 +213,14 @@ export default function Home() {
   // ── Sincronizar com o contexto quando os dados carregam do ficheiro ───────
 
   const [sincronizado, setSincronizado] = useState(false);
+
+  // ── API: Famílias e Fichas Técnicas ──────────────────────────────────────────
+  const [familias, setFamilias] = useState<FamilyOption[]>([]);
+  const [loadingFamilias, setLoadingFamilias] = useState(false);
+  const [produtosApi, setProdutosApi] = useState<Produto[]>([]);
+  const [produtoSelecionado, setProdutoSelecionado] = useState<string | null>(null);
+  const [loadingFichas, setLoadingFichas] = useState(false);
+  const [loadingFichaPorCodigo, setLoadingFichaPorCodigo] = useState(false);
 
   useEffect(() => {
     if (sincronizado) return;
@@ -190,6 +304,86 @@ export default function Home() {
     guardarConfiguracaoAtual();
   }, [guardarConfiguracaoAtual]);
 
+  // ── Load families from API ───────────────────────────────────────────────────
+  useEffect(() => {
+    const carregarFamilias = async () => {
+      setLoadingFamilias(true);
+      try {
+        const resposta = await axios.get(`${API_BASE_URL}/families/`);
+        const families = ensureArray(resposta.data).map((family, index) => {
+          const id = pickString(family, ["family_id","id","code","reference"]) || `FAM${String(index + 1).padStart(3, "0")}`;
+          const name = pickString(family, ["family_name","name","nome"]) || id;
+          const reference = pickString(family, ["reference","referencia"]);
+          return { id, label: reference ? `${name} (${reference})` : name };
+        });
+        if (families.length === 0) throw new Error("Sem familias");
+        setFamilias(families);
+        setGrupoArtigoSelecionado((current) => current || families[0].id);
+      } catch {
+        const fallback = produtosMock.map((p) => ({ id: p.id, label: p.nome }));
+        setFamilias(fallback);
+        setGrupoArtigoSelecionado((current) => current || fallback[0]?.id || "");
+      } finally {
+        setLoadingFamilias(false);
+      }
+    };
+    carregarFamilias();
+  }, []);
+
+  // ── Load technical sheets for selected family ────────────────────────────────
+  useEffect(() => {
+    if (!grupoArtigoSelecionado) return;
+    const carregarFichas = async () => {
+      setLoadingFichas(true);
+      try {
+        const resposta = await axios.get(`${API_BASE_URL}/technical-sheets/family/${encodeURIComponent(grupoArtigoSelecionado)}`);
+        const fichas = ensureArray(resposta.data).map((sheet, index) => mapApiTaskToProduto(sheet, index, grupoArtigoSelecionado));
+        setProdutosApi(fichas);
+        setProdutoSelecionado((prev) => fichas.some((f) => f.id === prev) ? prev : fichas[0]?.id || null);
+      } catch {
+        const fallback = produtosMock.filter((p) => p.id === grupoArtigoSelecionado);
+        const all = fallback.length ? fallback : produtosMock;
+        setProdutosApi(all);
+        setProdutoSelecionado(all[0]?.id || null);
+      } finally {
+        setLoadingFichas(false);
+      }
+    };
+    carregarFichas();
+  }, [grupoArtigoSelecionado]);
+
+  // ── Load detailed sheet by code ──────────────────────────────────────────────
+  const handleCarregarFichaPorCodigo = async (produtoId: string) => {
+    const produtoBase = produtosApi.find((p) => p.id === produtoId);
+    if (!produtoBase) return;
+    const codigos = Array.from(new Set([produtoBase.id, produtoBase.referencia].map((v) => v?.trim()).filter(Boolean))) as string[];
+    if (codigos.length === 0) return;
+    setLoadingFichaPorCodigo(true);
+    try {
+      let sheet: ApiRecord | null = null;
+      for (const codigo of codigos) {
+        try {
+          const resposta = await axios.get(`${API_BASE_URL}/technical-sheets/code/${encodeURIComponent(codigo)}`);
+          const candidate = ensureRecord(resposta.data);
+          if (candidate) { sheet = candidate; break; }
+        } catch { /* continuar */ }
+      }
+      if (sheet) {
+        const familyId = pickString(sheet, ["family_id","family","group_id"]) || grupoArtigoSelecionado;
+        const ficha = mapApiTaskToProduto(sheet, 0, familyId);
+        const normalizada: Produto = { ...produtoBase, ...ficha, id: produtoBase.id, referencia: pickString(sheet, ["code","task_code","reference","referencia"]) || ficha.referencia };
+        setProdutosApi((current) => current.map((p) => p.id === produtoId ? normalizada : p));
+      }
+    } catch { /* ignorar */ } finally {
+      setLoadingFichaPorCodigo(false);
+    }
+  };
+
+  const handleSelecionarFicha = (produtoId: string) => {
+    setProdutoSelecionado(produtoId);
+    void handleCarregarFichaPorCodigo(produtoId);
+  };
+
   // ─── Atalhos ──────────────────────────────────────────────────────────────
 
   const operadores = dadosUnidades[unidadeAtiva].operadores;
@@ -197,7 +391,7 @@ export default function Home() {
   const atribuicoesManual = dadosUnidades[unidadeAtiva].atribuicoesManual;
   const config = dadosUnidades[unidadeAtiva].config;
 
-  const produto = produtosMock.find((p) => p.id === grupoArtigoSelecionado);
+  const produto = produtosApi.find((p) => p.id === produtoSelecionado);
   const operacoes = config.possibilidade === 4
     ? operacoesManual
     : (produto ? produto.operacoes : operacoesMock);
@@ -532,31 +726,66 @@ export default function Home() {
       {/* Seleção de Grupo de Artigo */}
       {config.possibilidade !== 4 && (
         <div className="bg-white p-5 rounded-sm border border-gray-200 shadow-sm">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Package className="w-5 h-5 text-blue-600" />
-              <span className="text-sm font-semibold text-gray-900">Grupo de Artigo:</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold uppercase text-gray-600">
+                Grupo de Artigo
+              </Label>
+              <Select
+                value={grupoArtigoSelecionado || undefined}
+                onValueChange={setGrupoArtigoSelecionado}
+                disabled={loadingFamilias || familias.length === 0}
+              >
+                <SelectTrigger className="rounded-sm text-sm">
+                  <SelectValue placeholder={loadingFamilias ? "A carregar grupos..." : "Selecione um grupo"} />
+                </SelectTrigger>
+                <SelectContent className="rounded-sm">
+                  {familias.map((familia) => (
+                    <SelectItem key={familia.id} value={familia.id} className="text-sm">
+                      {familia.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <Select value={grupoArtigoSelecionado} onValueChange={setGrupoArtigoSelecionado}>
-              <SelectTrigger className="w-[350px] rounded-sm text-sm">
-                <SelectValue placeholder="Selecione um grupo de artigo" />
-              </SelectTrigger>
-              <SelectContent className="rounded-sm">
-                {produtosMock.map((prod) => (
-                  <SelectItem key={prod.id} value={prod.id} className="text-sm">
-                    <span className="font-mono text-xs text-gray-500 mr-2">{prod.referencia}</span>
-                    {prod.nome}
-                    <span className="text-gray-400 ml-2">({prod.operacoes.length} ops)</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {produto && (
-              <div className="text-xs text-gray-500">
-                Tempo total: <span className="font-mono">{tempoTotal.toFixed(2)} min</span>
-              </div>
-            )}
+
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold uppercase text-gray-600">
+                Ficha Técnica
+              </Label>
+              <Select
+                value={produtoSelecionado || undefined}
+                onValueChange={handleSelecionarFicha}
+                disabled={loadingFichas || loadingFichaPorCodigo || produtosApi.length === 0}
+              >
+                <SelectTrigger className="rounded-sm text-sm">
+                  <SelectValue
+                    placeholder={
+                      loadingFichas ? "A carregar fichas..." :
+                      loadingFichaPorCodigo ? "A carregar detalhes..." :
+                      "Selecione uma ficha técnica"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent className="rounded-sm">
+                  {produtosApi.map((prod) => (
+                    <SelectItem key={prod.id} value={prod.id} className="text-sm">
+                      <span className="font-mono text-xs text-gray-500 mr-2">{prod.referencia}</span>
+                      {prod.nome}
+                      <span className="text-gray-400 ml-2">({prod.operacoes.length} ops)</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
+          {produto && (
+            <div className="text-xs text-gray-500 mt-3">
+              Tempo total: <span className="font-mono">{operacoes.reduce((s, op) => s + op.tempo, 0).toFixed(2)} min</span>
+              <span className="mx-2">·</span>
+              <span>{operacoes.length} operações</span>
+            </div>
+          )}
         </div>
       )}
 

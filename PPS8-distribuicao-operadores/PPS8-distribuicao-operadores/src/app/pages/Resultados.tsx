@@ -1,12 +1,10 @@
 import { useLocation, useNavigate } from "react-router";
-import { ResultadosBalanceamento, DistribuicaoCarga, ConfiguracaoDistribuicao } from "../types";
+import { ResultadosBalanceamento, ConfiguracaoDistribuicao } from "../types";
 import { DashboardResultados } from "../components/DashboardResultados";
-import { TabelaDistribuicao } from "../components/TabelaDistribuicao";
 import { VisualizadorFluxo } from "../components/VisualizadorFluxo";
 import { ResumoResultados } from "../components/ResumoResultados";
 import { Button } from "../components/ui/button";
 import { ArrowLeft, Download, Printer, Calculator } from "lucide-react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { useEffect, useState, useCallback } from "react";
 
 export default function Resultados() {
@@ -49,41 +47,6 @@ export default function Resultados() {
   // Estado para resultados editáveis — recalcula outputs globais quando a distribuição muda
   const [resultadosAtuais, setResultadosAtuais] = useState<ResultadosBalanceamento>(resultados);
   const [configAtual, setConfigAtual] = useState<ConfiguracaoDistribuicao>(config);
-
-  const handleDistribuicaoChange = useCallback((novaDistribuicao: DistribuicaoCarga[]) => {
-    // Tempo total de todas as operações
-    const tempoTotal = operacoes.reduce((sum: number, op: any) => sum + op.tempo, 0);
-    
-    // Tempo de ciclo = carga do operador mais carregado (bottleneck)
-    const tempoCiclo = Math.max(...novaDistribuicao.map((d) => d.cargaHoraria));
-    
-    // Takt time mantém-se (baseado na procura, não na distribuição)
-    const taktTime = resultados.taktTime;
-    
-    // Ciclos por hora = 60 / tempo de ciclo (bottleneck)
-    const numeroCiclosPorHora = tempoCiclo > 0 ? 60 / tempoCiclo : 0;
-    
-    // Número de operadores com pelo menos 1 operação
-    const numOperadoresAtivos = novaDistribuicao.filter((d) => d.operacoes.length > 0).length;
-    
-    // Produtividade (eficiência de linha) = tempoTotal / (nOps * tempoCiclo) * 100
-    const produtividade = numOperadoresAtivos > 0 && tempoCiclo > 0
-      ? (tempoTotal / (numOperadoresAtivos * tempoCiclo)) * 100
-      : 0;
-    
-    // Perdas = 100 - produtividade
-    const perdas = Math.max(0, 100 - produtividade);
-
-    setResultadosAtuais({
-      distribuicao: novaDistribuicao,
-      taktTime,
-      tempoCiclo,
-      numeroCiclosPorHora,
-      produtividade,
-      perdas,
-      numeroOperadores: resultados.numeroOperadores,
-    });
-  }, [operacoes, resultados.taktTime, resultados.numeroOperadores]);
 
   const handleRecalcular = useCallback((novosResultados: ResultadosBalanceamento, novaConfig: ConfiguracaoDistribuicao) => {
     setResultadosAtuais(novosResultados);
@@ -171,67 +134,27 @@ export default function Resultados() {
 
       {/* Main Content */}
       <main className="px-6 py-6 space-y-6">
-        {/* Tabs */}
-        <Tabs defaultValue="dashboard" className="space-y-3">
-          {/* Tabs + KPIs numa linha */}
-          <div className="sticky top-[95px] z-30 bg-gray-50 pb-3">
-            <div className="flex gap-4 items-end">
-              {/* Tab List */}
-              <TabsList className="print:hidden bg-white h-9 px-[5px] py-px rounded-md border border-[#e5e7eb] shrink-0">
-                <TabsTrigger 
-                  value="dashboard" 
-                  className="data-[state=active]:bg-[#2b7fff] data-[state=active]:text-white h-[25px] px-[9px] py-[5px] rounded-md text-[12px] font-medium"
-                >
-                  Dashboard
-                </TabsTrigger>
-                <TabsTrigger 
-                  value="distribuicao" 
-                  className="data-[state=active]:bg-[#2b7fff] data-[state=active]:text-white h-[25px] px-[9px] py-[5px] rounded-md text-[12px] font-medium"
-                >
-                  Distribuição
-                </TabsTrigger>
-                <TabsTrigger 
-                  value="fluxo" 
-                  className="data-[state=active]:bg-[#2b7fff] data-[state=active]:text-white h-[25px] px-[9px] py-[5px] rounded-md text-[12px] font-medium"
-                >
-                  Visualização
-                </TabsTrigger>
-              </TabsList>
+        {/* KPIs */}
+        <div className="sticky top-[95px] z-30 bg-gray-50 pb-3">
+          <ResumoResultados resultados={resultadosAtuais} config={config} />
+        </div>
 
-              {/* KPIs inline - ocupa todo o espaço restante */}
-              <ResumoResultados resultados={resultadosAtuais} config={config} />
-            </div>
-          </div>
+        <div className="space-y-6">
+          <DashboardResultados
+            resultados={resultadosAtuais}
+            operadores={operadores}
+            operacoes={operacoes}
+            config={configAtual}
+            onRecalcular={handleRecalcular}
+          />
 
-          <TabsContent value="dashboard" className="space-y-6">
-            <DashboardResultados
-              resultados={resultadosAtuais}
-              operadores={operadores}
-              operacoes={operacoes}
-              config={configAtual}
-              onRecalcular={handleRecalcular}
-            />
-          </TabsContent>
-
-          <TabsContent value="distribuicao" className="space-y-6">
-            <TabelaDistribuicao
-              resultados={resultadosAtuais}
-              operadores={operadores}
-              operacoes={operacoes}
-              unidadeTempo={configAtual.possibilidade === 4 ? "s" : "min"}
-              onDistribuicaoChange={handleDistribuicaoChange}
-            />
-          </TabsContent>
-
-          <TabsContent value="fluxo" className="space-y-6">
-            <VisualizadorFluxo
-              resultados={resultadosAtuais}
-              operadores={operadores}
-              operacoes={operacoes}
-              layoutConfig={dataSource.layoutConfig}
-            />
-          </TabsContent>
-        </Tabs>
+          <VisualizadorFluxo
+            resultados={resultadosAtuais}
+            operadores={operadores}
+            operacoes={operacoes}
+            layoutConfig={dataSource.layoutConfig}
+          />
+        </div>
       </main>
     </div>
   );
