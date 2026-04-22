@@ -1,5 +1,5 @@
 ﻿import { useState, useRef, useEffect } from "react";
-import { Produto, Operacao } from "../types";
+import { Produto, Operacao, Operador } from "../types";
 import { produtosMock, operadoresMock } from "../data/mock";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -214,6 +214,117 @@ const mapApiTaskToProduto = (raw: ApiRecord, index: number, familyId: string): P
   };
 };
 
+const normalizeToken = (value: string): string => value.trim().toUpperCase();
+
+const normalizeNumericToken = (value: string): string => {
+  const sanitized = value.trim().replace(/[^\d-]/g, "");
+  if (!sanitized) return "";
+  const parsed = Number(sanitized);
+  return Number.isFinite(parsed) ? String(parsed) : "";
+};
+
+const parseForcedOperatorIds = (value: unknown): string[] => {
+  const asArray = (input: unknown[]): string[] =>
+    input
+      .map((entry) => (typeof entry === "string" || typeof entry === "number" ? String(entry).trim() : ""))
+      .filter(Boolean);
+
+  if (Array.isArray(value)) return asArray(value);
+  if (typeof value === "number" && Number.isFinite(value)) return [String(value)];
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return asArray(parsed);
+      } catch {
+        // fallback para parsing simples abaixo
+      }
+    }
+
+    if (trimmed.includes(",") || trimmed.includes(";")) {
+      return trimmed
+        .split(/[;,]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    }
+
+    return [trimmed];
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const nestedCandidates = [
+      record.operator_ids,
+      record.operators,
+      record.operadores,
+      record.operator_id,
+      record.operator,
+      record.operador,
+      record.id,
+      record.code,
+    ];
+    for (const candidate of nestedCandidates) {
+      const parsed = parseForcedOperatorIds(candidate);
+      if (parsed.length > 0) return parsed;
+    }
+  }
+
+  return [];
+};
+
+const resolveForcedOperationId = (forcedKey: string, operacoes: Operacao[]): string | null => {
+  const keyToken = normalizeToken(forcedKey);
+  const keyNumeric = normalizeNumericToken(forcedKey);
+  const keyAsNumber = Number(forcedKey);
+
+  const byId = operacoes.find((operacao) => normalizeToken(operacao.id) === keyToken);
+  if (byId) return byId.id;
+
+  if (keyNumeric) {
+    const byIdNumeric = operacoes.find(
+      (operacao) => normalizeNumericToken(operacao.id) === keyNumeric
+    );
+    if (byIdNumeric) return byIdNumeric.id;
+  }
+
+  if (Number.isFinite(keyAsNumber)) {
+    const bySequence = operacoes.find((operacao) => operacao.sequencia === keyAsNumber);
+    if (bySequence) return bySequence.id;
+  }
+
+  return null;
+};
+
+const mapForcedAllocationsToManual = (
+  forcedAllocations: Record<string, unknown>,
+  operacoes: Operacao[]
+): { [operacaoId: string]: string[] } => {
+  const mapped: { [operacaoId: string]: string[] } = {};
+
+  Object.entries(forcedAllocations).forEach(([forcedKey, forcedValue]) => {
+    const operacaoId = resolveForcedOperationId(forcedKey, operacoes);
+    if (!operacaoId) return;
+
+    const operadoresIds = Array.from(new Set(parseForcedOperatorIds(forcedValue)));
+    if (operadoresIds.length === 0) return;
+    mapped[operacaoId] = operadoresIds;
+  });
+
+  return mapped;
+};
+
+const canonicalizeOperatorIds = (operatorIds: string[], operadoresCatalogo: Operador[]): string[] => {
+  if (operadoresCatalogo.length === 0) return operatorIds;
+  const byNormalized = new Map(
+    operadoresCatalogo.map((operador) => [normalizeToken(operador.id), operador.id])
+  );
+
+  return operatorIds.map((operatorId) => byNormalized.get(normalizeToken(operatorId)) || operatorId);
+};
+
 interface FamilyOption {
   id: string;
   label: string;
@@ -246,6 +357,7 @@ export default function FichaTecnica() {
   const operacaoPendenteSyncIndexRef = useRef<number | null>(null);
   const operacaoPendenteSyncCodeRef = useRef<string | null>(null);
   const produtosRef = useRef<Produto[]>([]);
+  const produtoSelecionadoRef = useRef<string | null>(null);
 
   const setOperacaoPendenteSync = (index: number | null, code: string | null) => {
     operacaoPendenteSyncIndexRef.current = index;
@@ -274,6 +386,10 @@ export default function FichaTecnica() {
   useEffect(() => {
     produtosRef.current = produtos;
   }, [produtos]);
+
+  useEffect(() => {
+    produtoSelecionadoRef.current = produtoSelecionado;
+  }, [produtoSelecionado]);
 
   useEffect(() => {
     const carregarFamilias = async () => {
@@ -317,11 +433,15 @@ export default function FichaTecnica() {
   }, []);
 
   useEffect(() => {
-    if (!grupoArtigoSelecionado) return;
+    if (!grupoArtigoSelecionado) {
+      setAtribuicoesManual({});
+      return;
+    }
 
     const carregarFichasDaFamilia = async () => {
       setLoadingFichas(true);
       setErroApi(null);
+      setAtribuicoesManual({});
       try {
         const resposta = await axios.get(
           `${API_BASE_URL}/technical-sheets/family/${encodeURIComponent(grupoArtigoSelecionado)}`
@@ -349,6 +469,7 @@ export default function FichaTecnica() {
         const fallback = produtosMock.filter((p) => p.id === grupoArtigoSelecionado);
         setProdutos(fallback);
         setProdutoSelecionado(fallback[0]?.id || null);
+        setAtribuicoesManual({});
       } finally {
         setLoadingFichas(false);
       }
@@ -356,6 +477,59 @@ export default function FichaTecnica() {
 
     carregarFichasDaFamilia();
   }, [grupoArtigoSelecionado]);
+
+  const handleCarregarAtribuicoesForcadas = async (produtoAlvo: Produto) => {
+    const taskIds = Array.from(
+      new Set([produtoAlvo.id, produtoAlvo.referencia].map((value) => value?.trim()).filter(Boolean))
+    ) as string[];
+
+    if (taskIds.length === 0) {
+      if (produtoSelecionadoRef.current === produtoAlvo.id) {
+        setAtribuicoesManual({});
+      }
+      return;
+    }
+
+    let forcedAllocations: Record<string, unknown> | null = null;
+    for (const taskId of taskIds) {
+      try {
+        const resposta = await axios.get(
+          `${API_BASE_URL}/technical-sheets/${encodeURIComponent(taskId)}/forced-allocations`
+        );
+        const responseData = resposta.data;
+        if (!responseData || typeof responseData !== "object" || Array.isArray(responseData)) {
+          continue;
+        }
+
+        const responseRecord = responseData as Record<string, unknown>;
+        const candidate =
+          responseRecord.forced_allocations ??
+          responseRecord.forcedAllocations ??
+          responseRecord.allocations ??
+          null;
+
+        if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+          forcedAllocations = candidate as Record<string, unknown>;
+          break;
+        }
+      } catch {
+        // tenta próximo task id
+      }
+    }
+
+    if (produtoSelecionadoRef.current !== produtoAlvo.id) return;
+
+    if (!forcedAllocations) {
+      setAtribuicoesManual({});
+      return;
+    }
+
+    const mapped = mapForcedAllocationsToManual(forcedAllocations, produtoAlvo.operacoes);
+    Object.keys(mapped).forEach((operacaoId) => {
+      mapped[operacaoId] = canonicalizeOperatorIds(mapped[operacaoId], operadores);
+    });
+    setAtribuicoesManual(mapped);
+  };
 
   const handleCarregarFichaPorCodigo = async (
     produtoId: string,
@@ -371,6 +545,7 @@ export default function FichaTecnica() {
 
     setLoadingFichaPorCodigo(true);
     setErroApi(null);
+    setAtribuicoesManual({});
 
     try {
       let technicalSheet: ApiRecord | null = null;
@@ -418,9 +593,11 @@ export default function FichaTecnica() {
         if (!exists) return [...current, fichaNormalizada];
         return current.map((item) => (item.id === produtoId ? fichaNormalizada : item));
       });
+      void handleCarregarAtribuicoesForcadas(fichaNormalizada);
     } catch (error) {
       console.error("Erro ao carregar ficha por codigo:", error);
       setErroApi("Nao foi possivel carregar detalhes da ficha tecnica pelo codigo.");
+      void handleCarregarAtribuicoesForcadas(produtoBase);
     } finally {
       setLoadingFichaPorCodigo(false);
     }
@@ -429,6 +606,7 @@ export default function FichaTecnica() {
   const handleSelecionarFicha = (produtoId: string) => {
     setProdutoSelecionado(produtoId);
     setOperacaoPendenteSync(null, null);
+    setAtribuicoesManual({});
     void handleCarregarFichaPorCodigo(produtoId);
   };
 

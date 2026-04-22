@@ -2,12 +2,11 @@ import { useState, useEffect, useCallback } from "react";
 import { Operador, Operacao, ConfiguracaoDistribuicao, Produto } from "../types";
 import { useNavigate } from "react-router";
 import { Button } from "../components/ui/button";
-import { Calculator, Users, Package, Factory, ChevronDown, Edit3 } from "lucide-react";
+import { Calculator, Users, Package, Factory, ChevronDown, Edit3, AlertTriangle } from "lucide-react";
 import { ConfiguracaoDistribuicaoComponent } from "../components/ConfiguracaoDistribuicao";
 import { LayoutConfigurador, LayoutConfig } from "../components/LayoutConfigurador";
 import { OperadorSelector } from "../components/OperadorSelector";
 import { TabelaOperacoesManual } from "../components/TabelaOperacoesManual";
-import { operacoesMock, produtosMock } from "../data/mock";
 import { calcularBalanceamento } from "../utils/balanceamento";
 import { salvarHistorico, obterHistorico } from "../utils/historico";
 import { useStorage } from "../contexts/StorageContext";
@@ -133,14 +132,28 @@ const mapApiOperation = (raw: ApiRecord, index: number): Operacao =>
 const mapApiTaskToProduto = (raw: ApiRecord, index: number, familyId: string): Produto => {
   const taskId = pickString(raw, ["task_id","task_code","id","code"]) || `${familyId}-TASK-${String(index + 1).padStart(3, "0")}`;
   const taskName = pickString(raw, ["task_name","name","nome","description","descricao"]) || `Ficha ${index + 1}`;
-  const operations = ensureArray(raw.operations ?? raw.operacoes ?? raw.steps ?? raw.sequence ?? raw.gama_operatoria).map((op, i) => mapApiOperation(op, i));
+  const operationsRaw = ensureArray(raw.operations ?? raw.operacoes ?? raw.steps ?? raw.sequence ?? raw.gama_operatoria).map((op, i) => mapApiOperation(op, i));
+  const operations = operationsRaw
+    .sort((a, b) => a.sequencia - b.sequencia)
+    .map((operation, operationIndex) => ({
+      ...operation,
+      sequencia: operationIndex + 1,
+    }));
+  const numOperations = pickNumber(raw, ["num_operations", "numero_operacoes", "operations_count"]) ?? operations.length;
+  const numCapableOperators = pickNumber(raw, ["num_capable_operators", "numero_operadores_disponiveis"]);
+  const numDistinctMachines = pickNumber(raw, ["num_distinct_machines", "numero_maquinas_distintas"]);
+  const indicators = [
+    numOperations != null ? `${numOperations} ops` : null,
+    numCapableOperators != null ? `${numCapableOperators} op disponiveis` : null,
+    numDistinctMachines != null ? `${numDistinctMachines} maquinas` : null,
+  ].filter(Boolean);
   const today = new Date().toISOString().split("T")[0];
   return {
     id: taskId,
     nome: taskName,
     referencia: pickString(raw, ["reference","referencia","task_reference","task_code"]) || taskId,
     cliente: pickString(raw, ["client","cliente"]),
-    descricao: pickString(raw, ["notes","observacoes","description","descricao"]) || `Ficha tecnica da familia ${familyId}`,
+    descricao: pickString(raw, ["notes","observacoes","description","descricao"]) || (indicators.length ? indicators.join(" | ") : `Ficha tecnica da familia ${familyId}`),
     operacoes: operations,
     dataCriacao: pickString(raw, ["created_at","creation_date","data_criacao"]) || today,
     dataModificacao: pickString(raw, ["updated_at","modified_at","data_modificacao"]) || today,
@@ -174,7 +187,7 @@ export default function Home() {
   const [unidadeAtiva, setUnidadeAtiva] = useState<1 | 2 | 3>(1);
 
   const [grupoArtigoSelecionado, setGrupoArtigoSelecionado] = useState<string>(
-    confGuardada.grupoArtigoSelecionado || produtosMock[0]?.id || ""
+    confGuardada.grupoArtigoSelecionado || ""
   );
 
   const [operacoesManual, setOperacoesManual] = useState<Operacao[]>(
@@ -221,6 +234,7 @@ export default function Home() {
   const [produtoSelecionado, setProdutoSelecionado] = useState<string | null>(null);
   const [loadingFichas, setLoadingFichas] = useState(false);
   const [loadingFichaPorCodigo, setLoadingFichaPorCodigo] = useState(false);
+  const [erroApi, setErroApi] = useState<string | null>(null);
 
   useEffect(() => {
     if (sincronizado) return;
@@ -308,6 +322,7 @@ export default function Home() {
   useEffect(() => {
     const carregarFamilias = async () => {
       setLoadingFamilias(true);
+      setErroApi(null);
       try {
         const resposta = await axios.get(`${API_BASE_URL}/families/`);
         const families = ensureArray(resposta.data).map((family, index) => {
@@ -318,11 +333,18 @@ export default function Home() {
         });
         if (families.length === 0) throw new Error("Sem familias");
         setFamilias(families);
-        setGrupoArtigoSelecionado((current) => current || families[0].id);
-      } catch {
-        const fallback = produtosMock.map((p) => ({ id: p.id, label: p.nome }));
-        setFamilias(fallback);
-        setGrupoArtigoSelecionado((current) => current || fallback[0]?.id || "");
+        setGrupoArtigoSelecionado((current) =>
+          current && families.some((family) => family.id === current)
+            ? current
+            : families[0].id
+        );
+      } catch (error) {
+        console.error("Erro ao carregar familias:", error);
+        setErroApi("Nao foi possivel carregar familias da API.");
+        setFamilias([]);
+        setGrupoArtigoSelecionado("");
+        setProdutosApi([]);
+        setProdutoSelecionado(null);
       } finally {
         setLoadingFamilias(false);
       }
@@ -332,19 +354,32 @@ export default function Home() {
 
   // ── Load technical sheets for selected family ────────────────────────────────
   useEffect(() => {
-    if (!grupoArtigoSelecionado) return;
+    if (!grupoArtigoSelecionado) {
+      setProdutosApi([]);
+      setProdutoSelecionado(null);
+      return;
+    }
     const carregarFichas = async () => {
       setLoadingFichas(true);
+      setErroApi(null);
       try {
         const resposta = await axios.get(`${API_BASE_URL}/technical-sheets/family/${encodeURIComponent(grupoArtigoSelecionado)}`);
-        const fichas = ensureArray(resposta.data).map((sheet, index) => mapApiTaskToProduto(sheet, index, grupoArtigoSelecionado));
+        const technicalSheets = ensureArray(resposta.data);
+        const fichas = technicalSheets.map((sheet, index) => mapApiTaskToProduto(sheet, index, grupoArtigoSelecionado));
         setProdutosApi(fichas);
-        setProdutoSelecionado((prev) => fichas.some((f) => f.id === prev) ? prev : fichas[0]?.id || null);
-      } catch {
-        const fallback = produtosMock.filter((p) => p.id === grupoArtigoSelecionado);
-        const all = fallback.length ? fallback : produtosMock;
-        setProdutosApi(all);
-        setProdutoSelecionado(all[0]?.id || null);
+        let proximoSelecionado: string | null = null;
+        setProdutoSelecionado((prev) => {
+          proximoSelecionado = fichas.some((f) => f.id === prev) ? prev : fichas[0]?.id || null;
+          return proximoSelecionado;
+        });
+        if (proximoSelecionado) {
+          void handleCarregarFichaPorCodigo(proximoSelecionado, fichas);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar fichas da familia:", error);
+        setErroApi("Nao foi possivel carregar fichas tecnicas da familia selecionada.");
+        setProdutosApi([]);
+        setProdutoSelecionado(null);
       } finally {
         setLoadingFichas(false);
       }
@@ -353,28 +388,57 @@ export default function Home() {
   }, [grupoArtigoSelecionado]);
 
   // ── Load detailed sheet by code ──────────────────────────────────────────────
-  const handleCarregarFichaPorCodigo = async (produtoId: string) => {
-    const produtoBase = produtosApi.find((p) => p.id === produtoId);
+  const handleCarregarFichaPorCodigo = async (
+    produtoId: string,
+    sourceProdutos: Produto[] = produtosApi
+  ) => {
+    const produtoBase = sourceProdutos.find((p) => p.id === produtoId);
     if (!produtoBase) return;
     const codigos = Array.from(new Set([produtoBase.id, produtoBase.referencia].map((v) => v?.trim()).filter(Boolean))) as string[];
     if (codigos.length === 0) return;
     setLoadingFichaPorCodigo(true);
+    setErroApi(null);
     try {
       let sheet: ApiRecord | null = null;
+      let codigoResolvido = codigos[0];
+      let ultimaFalha: unknown = null;
       for (const codigo of codigos) {
         try {
           const resposta = await axios.get(`${API_BASE_URL}/technical-sheets/code/${encodeURIComponent(codigo)}`);
           const candidate = ensureRecord(resposta.data);
-          if (candidate) { sheet = candidate; break; }
-        } catch { /* continuar */ }
+          if (candidate) {
+            sheet = candidate;
+            codigoResolvido = codigo;
+            break;
+          }
+        } catch (error) {
+          ultimaFalha = error;
+        }
       }
-      if (sheet) {
-        const familyId = pickString(sheet, ["family_id","family","group_id"]) || grupoArtigoSelecionado;
-        const ficha = mapApiTaskToProduto(sheet, 0, familyId);
-        const normalizada: Produto = { ...produtoBase, ...ficha, id: produtoBase.id, referencia: pickString(sheet, ["code","task_code","reference","referencia"]) || ficha.referencia };
-        setProdutosApi((current) => current.map((p) => p.id === produtoId ? normalizada : p));
+      if (!sheet) {
+        throw ultimaFalha || new Error("Resposta invalida para ficha tecnica por codigo");
       }
-    } catch { /* ignorar */ } finally {
+      const familyId = pickString(sheet, ["family_id","family","group_id"]) || grupoArtigoSelecionado;
+      const ficha = mapApiTaskToProduto(sheet, 0, familyId);
+      const referenciaCodigo =
+        pickString(sheet, ["code","task_code","reference","referencia"]) ||
+        ficha.referencia ||
+        codigoResolvido;
+      const normalizada: Produto = {
+        ...produtoBase,
+        ...ficha,
+        id: produtoBase.id,
+        referencia: referenciaCodigo,
+      };
+      setProdutosApi((current) => {
+        const exists = current.some((p) => p.id === produtoId);
+        if (!exists) return [...current, normalizada];
+        return current.map((p) => (p.id === produtoId ? normalizada : p));
+      });
+    } catch (error) {
+      console.error("Erro ao carregar ficha por codigo:", error);
+      setErroApi("Nao foi possivel carregar detalhes da ficha tecnica pelo codigo.");
+    } finally {
       setLoadingFichaPorCodigo(false);
     }
   };
@@ -394,7 +458,7 @@ export default function Home() {
   const produto = produtosApi.find((p) => p.id === produtoSelecionado);
   const operacoes = config.possibilidade === 4
     ? operacoesManual
-    : (produto ? produto.operacoes : operacoesMock);
+    : (produto ? produto.operacoes : []);
 
   // ─── Handlers ─────────────────────────────────────────────────────────────
 
@@ -724,6 +788,13 @@ export default function Home() {
       </div>
 
       {/* Seleção de Grupo de Artigo */}
+      {config.possibilidade !== 4 && erroApi && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-sm flex items-center gap-2 text-amber-700 text-sm">
+          <AlertTriangle className="w-4 h-4" />
+          {erroApi}
+        </div>
+      )}
+
       {config.possibilidade !== 4 && (
         <div className="bg-white p-5 rounded-sm border border-gray-200 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
