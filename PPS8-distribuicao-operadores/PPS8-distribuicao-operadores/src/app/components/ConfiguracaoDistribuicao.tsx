@@ -1,4 +1,4 @@
-import { ConfiguracaoDistribuicao } from "../types";
+﻿import { ConfiguracaoDistribuicao } from "../types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
@@ -29,9 +29,9 @@ export function ConfiguracaoDistribuicaoComponent({
             <Calculator className="w-5 h-5 text-purple-600" />
           </div>
           <div>
-            <div className="text-base font-semibold">Configuração de Distribuição</div>
+            <div className="text-base font-semibold">Configuracao de Distribuicao</div>
             <CardDescription className="text-gray-500 mt-0.5 text-xs">
-              Critérios para o balanceamento da linha de produção
+              Criterios para o balanceamento da linha de producao
             </CardDescription>
           </div>
         </CardTitle>
@@ -39,7 +39,7 @@ export function ConfiguracaoDistribuicaoComponent({
       <CardContent className="space-y-6 p-6">
         <div className="space-y-3">
           <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
-            Método de Distribuição
+            Metodo de Distribuicao
           </Label>
           <RadioGroup
             value={config.possibilidade.toString()}
@@ -51,7 +51,7 @@ export function ConfiguracaoDistribuicaoComponent({
               <RadioGroupItem value="1" id="r1" className="mt-0.5" />
               <div className="flex-1">
                 <Label htmlFor="r1" className="font-medium cursor-pointer text-gray-900 text-sm">
-                  Distribuição Ideal (Automática)
+                  Distribuicao Ideal (Automatica)
                 </Label>
                 <p className="text-xs text-gray-500 mt-1">
                   Calcula automaticamente o balanceamento mais eficiente com base nas horas do turno e produtividade estimada
@@ -66,7 +66,7 @@ export function ConfiguracaoDistribuicaoComponent({
                   Por Quantidade Objetivo
                 </Label>
                 <p className="text-xs text-gray-500 mt-1">
-                  Define meta de produção diária — o sistema calcula o número de operadores necessários
+                  Define meta de producao diaria - o sistema calcula o numero de operadores necessarios
                 </p>
               </div>
             </div>
@@ -75,10 +75,10 @@ export function ConfiguracaoDistribuicaoComponent({
               <RadioGroupItem value="3" id="r3" className="mt-0.5" />
               <div className="flex-1">
                 <Label htmlFor="r3" className="font-medium cursor-pointer text-gray-900 text-sm">
-                  Por Número de Operadores
+                  Por Numero de Operadores
                 </Label>
                 <p className="text-xs text-gray-500 mt-1">
-                  Distribui carga com número fixo de operadores definido por si
+                  Distribui carga com numero fixo de operadores definido por si
                 </p>
               </div>
             </div>
@@ -88,10 +88,10 @@ export function ConfiguracaoDistribuicaoComponent({
               <div className="flex-1">
                 <Label htmlFor="r4" className="font-medium cursor-pointer text-gray-900 text-sm flex items-center gap-2">
                   <Edit3 className="w-4 h-4 text-blue-600" />
-                  Entrada Manual de Operações
+                  Entrada Manual de Operacoes
                 </Label>
                 <p className="text-xs text-gray-500 mt-1">
-                  Insere manualmente os dados das operações (ID, nome, tempo, máquina) numa tabela editável
+                  Insere manualmente os dados das operacoes (ID, nome, tempo, maquina) numa tabela editavel
                 </p>
               </div>
             </div>
@@ -101,16 +101,16 @@ export function ConfiguracaoDistribuicaoComponent({
         {config.possibilidade !== 4 && (
         <div className="space-y-4 pt-4 border-t border-gray-200">
           <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
-            Parâmetros Adicionais
+            Parametros Adicionais
           </Label>
 
           <div className="flex items-center justify-between p-4 border border-gray-200 rounded-sm">
             <div className="flex-1">
               <Label htmlFor="agrupar" className="font-medium text-gray-900 text-sm">
-                Agrupar por Tipo de Máquina
+                Agrupar por Tipo de Maquina
               </Label>
               <p className="text-xs text-gray-500 mt-1">
-                Reduz deslocamentos agrupando operações similares
+                Reduz deslocamentos agrupando operacoes similares
               </p>
             </div>
             <Switch
@@ -120,11 +120,11 @@ export function ConfiguracaoDistribuicaoComponent({
             />
           </div>
 
-          {/* Campos numéricos de configuração */}
+          {/* Campos numericos de configuracao */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 border border-gray-200 rounded-sm">
             <div className="space-y-2">
               <Label className="text-xs font-medium text-gray-700">
-                Carga Máxima por Operador
+                Carga Maxima por Operador
               </Label>
               <Input
                 type="number"
@@ -139,29 +139,35 @@ export function ConfiguracaoDistribuicaoComponent({
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-xs font-medium text-gray-700">Não Dividir Operações Maiores Que </Label>
+              <Label className="text-xs font-medium text-gray-700">Nao Dividir Operacoes Maiores Que </Label>
               <Input
                 type="number"
-                min={0}
+                min={1.01}
                 max={10}
-                step={0.1}
+                step={0.01}
                 value={config.naoDividirMaiorQue}
                 onChange={(e) =>
-                  onChange({ ...config, naoDividirMaiorQue: Number(e.target.value) })
+                  onChange({
+                    ...config,
+                    naoDividirMaiorQue: Math.max(1.01, Number(e.target.value) || 1.1),
+                  })
                 }
                 className="rounded-sm text-sm font-mono"
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-xs font-medium text-gray-700">Não Dividir Operações Menores Que </Label>
+              <Label className="text-xs font-medium text-gray-700">Nao Dividir Operacoes Menores Que </Label>
               <Input
                 type="number"
                 min={0}
-                max={10}
-                step={0.1}
+                max={0.99}
+                step={0.01}
                 value={config.naoDividirMenorQue}
                 onChange={(e) =>
-                  onChange({ ...config, naoDividirMenorQue: Number(e.target.value) })
+                  onChange({
+                    ...config,
+                    naoDividirMenorQue: Math.min(0.99, Math.max(0, Number(e.target.value) || 0.9)),
+                  })
                 }
                 className="rounded-sm text-sm font-mono"
               />
@@ -173,3 +179,4 @@ export function ConfiguracaoDistribuicaoComponent({
     </Card>
   );
 }
+

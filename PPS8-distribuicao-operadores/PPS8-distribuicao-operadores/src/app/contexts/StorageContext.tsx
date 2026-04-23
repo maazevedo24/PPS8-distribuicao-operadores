@@ -83,7 +83,7 @@ const dadosPadrao: DadosSessao = {
     grupoArtigoSelecionado: "",
     operacoesManual: [],
     layoutConfig: {
-      tipoLayout: "espinha",
+      tipoLayout: "linha",
       postosPorLado: 8,
       distanciaMaxima: 3,
       permitirRetrocesso: false,

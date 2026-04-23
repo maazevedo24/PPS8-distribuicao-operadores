@@ -1,5 +1,6 @@
 export interface Operador {
   id: string;
+  nome?: string;
   competencias: { 
     [posicao: string]: { 
       operacao: string | null; 
@@ -102,6 +103,7 @@ export interface DistribuicaoCarga {
   cargaHoraria: number;
   ocupacao: number;
   ciclosPorHora: number;
+  temposOperacoes?: Record<string, number>;
 }
 
 export interface ResultadosBalanceamento {
@@ -109,6 +111,10 @@ export interface ResultadosBalanceamento {
   numeroCiclosPorHora: number;
   taktTime: number; // minutos
   tempoCiclo: number; // minutos
+  ocupacaoTotal?: number;
+  produtividade?: number;
+  perdas?: number;
+  numeroOperadores?: number;
 }
 
 export interface HistoricoBalanceamento {

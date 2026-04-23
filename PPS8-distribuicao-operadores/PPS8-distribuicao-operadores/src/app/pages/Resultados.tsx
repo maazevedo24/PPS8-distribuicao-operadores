@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from "react-router";
+﻿import { useLocation, useNavigate } from "react-router";
 import { ResultadosBalanceamento, ConfiguracaoDistribuicao } from "../types";
 import { DashboardResultados } from "../components/DashboardResultados";
 import { VisualizadorFluxo } from "../components/VisualizadorFluxo";
@@ -44,7 +44,7 @@ export default function Resultados() {
     config: ConfiguracaoDistribuicao;
   };
 
-  // Estado para resultados editáveis — recalcula outputs globais quando a distribuição muda
+  // Estado para resultados editaveis
   const [resultadosAtuais, setResultadosAtuais] = useState<ResultadosBalanceamento>(resultados);
   const [configAtual, setConfigAtual] = useState<ConfiguracaoDistribuicao>(config);
 
@@ -100,10 +100,10 @@ export default function Resultados() {
                 </div>
                 <div>
                   <h1 className="text-sm font-semibold text-gray-900">
-                    Análise de Resultados
+                    Analise de Resultados
                   </h1>
                   <p className="text-gray-500 text-[10px]">
-                    Relatório do balanceamento calculado
+                    Relatorio do balanceamento calculado
                   </p>
                 </div>
               </div>
@@ -159,3 +159,4 @@ export default function Resultados() {
     </div>
   );
 }
+

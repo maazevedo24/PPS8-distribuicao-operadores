@@ -35,10 +35,11 @@ export interface LayoutConfig {
 interface LayoutConfiguradorProps {
   operacoes: any[];
   onLayoutChange?: (config: LayoutConfig) => void;
+  agruparPorMaquina?: boolean;
 }
 
-export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfiguradorProps) {
-  const [tipoLayout, setTipoLayout] = useState<"linha" | "espinha">("espinha");
+export function LayoutConfigurador({ operacoes, onLayoutChange, agruparPorMaquina = false }: LayoutConfiguradorProps) {
+  const [tipoLayout, setTipoLayout] = useState<"linha" | "espinha">("linha");
   const [postosPorLado, setPostosPorLado] = useState(8);
   const [distanciaMaxima, setDistanciaMaxima] = useState(3);
   const [permitirRetrocesso, setPermitirRetrocesso] = useState(false);
@@ -55,7 +56,7 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
 
   const tiposMaquinas = Array.from(new Set(operacoes.map(op => op.tipoMaquina || "Geral")));
 
-  // Propagar mudanças de layout para o componente pai
+  // Propagar mudancas de layout para o componente pai
   useEffect(() => {
     onLayoutChange?.({
       tipoLayout,
@@ -76,8 +77,8 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
               <Factory className="w-3.5 h-3.5 text-purple-600" />
             </div>
             <div>
-              <div className="text-sm font-semibold">Configuração de Layout</div>
-              <p className="text-[10px] text-gray-500 font-normal mt-0.5">Disposição física e restrições da linha de produção</p>
+              <div className="text-sm font-semibold">Configuracao de Layout</div>
+              <p className="text-[10px] text-gray-500 font-normal mt-0.5">Disposicao fisica e restricoes da linha de producao</p>
             </div>
           </CardTitle>
         </CardHeader>
@@ -129,9 +130,9 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
                 <Move className="w-3 h-3 text-blue-700" />
                 <span className="text-[10px] font-semibold text-gray-900">Mobilidade</span>
               </div>
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className={`grid ${agruparPorMaquina ? "grid-cols-3" : "grid-cols-1"} gap-1.5`}>
                 <div>
-                  <Label htmlFor="lc-postos" className="text-[9px] text-gray-700">Postos</Label>
+                  <Label htmlFor="lc-postos" className="text-[9px] text-gray-700">{"Postos m\u00E1ximos"}</Label>
                   <Input
                     id="lc-postos"
                     type="number"
@@ -142,29 +143,33 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
                     className="rounded-sm mt-0.5 h-7 text-[10px]"
                   />
                 </div>
-                <div>
-                  <Label htmlFor="lc-distancia" className="text-[9px] text-gray-700">Distância</Label>
-                  <Input
-                    id="lc-distancia"
-                    type="number"
-                    min={1}
-                    max={8}
-                    value={distanciaMaxima}
-                    onChange={(e) => setDistanciaMaxima(Number(e.target.value))}
-                    className="rounded-sm mt-0.5 h-7 text-[10px]"
-                  />
-                </div>
-                <div>
-                  <Label className="text-[9px] text-gray-700 mb-0.5 block">Retroceder</Label>
-                  <div className="flex items-center gap-1 h-7">
-                    <Switch checked={permitirRetrocesso} onCheckedChange={setPermitirRetrocesso} />
+                {agruparPorMaquina && (
+                  <div>
+                    <Label htmlFor="lc-distancia" className="text-[9px] text-gray-700">Distancia</Label>
+                    <Input
+                      id="lc-distancia"
+                      type="number"
+                      min={1}
+                      max={8}
+                      value={distanciaMaxima}
+                      onChange={(e) => setDistanciaMaxima(Number(e.target.value))}
+                      className="rounded-sm mt-0.5 h-7 text-[10px]"
+                    />
                   </div>
+                )}
+                {agruparPorMaquina && (
+                  <div>
+                    <Label className="text-[9px] text-gray-700 mb-0.5 block">Retroceder</Label>
+                    <div className="flex items-center gap-1 h-7">
+                      <Switch checked={permitirRetrocesso} onCheckedChange={setPermitirRetrocesso} />
+                    </div>
+                  </div>
+                )}
                 </div>
-              </div>
               {tipoLayout === "espinha" && (
                 <div className="mt-2 pt-2 border-t border-blue-200">
                   <div className="flex items-center justify-between">
-                    <Label className="text-[9px] text-gray-700">Permitir Cruzamento (A ↔ B)</Label>
+                    <Label className="text-[9px] text-gray-700">Permitir Cruzamento (A {"<->"} B)</Label>
                     <Switch checked={permitirCruzamento} onCheckedChange={setPermitirCruzamento} />
                   </div>
                   <p className="text-[8px] text-gray-500 mt-1">Operadores podem mudar de lado do corredor</p>
@@ -172,12 +177,12 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
               )}
             </div>
 
-            {/* Restrições de Proximidade */}
+            {/* Restricoes de Proximidade */}
             <div className="p-2 bg-amber-50 rounded-sm border border-amber-200">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-1">
                   <AlertTriangle className="w-3 h-3 text-amber-700" />
-                  <span className="text-[10px] font-semibold text-gray-900">Restrições</span>
+                  <span className="text-[10px] font-semibold text-gray-900">Restricoes</span>
                 </div>
                 <Dialog open={dialogRestricaoAberto} onOpenChange={setDialogRestricaoAberto}>
                   <DialogTrigger asChild>
@@ -188,12 +193,12 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
                   </DialogTrigger>
                   <DialogContent className="rounded-sm">
                     <DialogHeader>
-                      <DialogTitle>Adicionar Restrição de Proximidade</DialogTitle>
-                      <DialogDescription>Defina uma regra ou sugestão de proximidade entre tipos de máquinas</DialogDescription>
+                      <DialogTitle>Adicionar Restricao de Proximidade</DialogTitle>
+                      <DialogDescription>Defina uma regra ou sugestao de proximidade entre tipos de maquinas</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                       <div className="space-y-2">
-                        <Label>Tipo de Máquina 1</Label>
+                        <Label>Tipo de Maquina 1</Label>
                         <Select value={novaRestricao.tipoMaquina1} onValueChange={(value) => setNovaRestricao({ ...novaRestricao, tipoMaquina1: value })}>
                           <SelectTrigger className="rounded-sm"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                           <SelectContent className="rounded-sm">
@@ -202,7 +207,7 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label>Tipo de Máquina 2</Label>
+                        <Label>Tipo de Maquina 2</Label>
                         <Select value={novaRestricao.tipoMaquina2} onValueChange={(value) => setNovaRestricao({ ...novaRestricao, tipoMaquina2: value })}>
                           <SelectTrigger className="rounded-sm"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                           <SelectContent className="rounded-sm">
@@ -211,17 +216,17 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="lc-distanciaRestricao">Distância Máxima (postos)</Label>
+                        <Label htmlFor="lc-distanciaRestricao">Distancia Maxima (postos)</Label>
                         <Input id="lc-distanciaRestricao" type="number" min={1} max={8} value={novaRestricao.distanciaMaxima} onChange={(e) => setNovaRestricao({ ...novaRestricao, distanciaMaxima: Number(e.target.value) })} className="rounded-sm" />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="lc-motivo">Motivo/Razão</Label>
-                        <Input id="lc-motivo" value={novaRestricao.motivo} onChange={(e) => setNovaRestricao({ ...novaRestricao, motivo: e.target.value })} placeholder="Ex: transferência de material pesado" className="rounded-sm" />
+                        <Label htmlFor="lc-motivo">Motivo/Razao</Label>
+                        <Input id="lc-motivo" value={novaRestricao.motivo} onChange={(e) => setNovaRestricao({ ...novaRestricao, motivo: e.target.value })} placeholder="Ex: transferencia de material pesado" className="rounded-sm" />
                       </div>
                       <div className="flex items-center justify-between p-3 bg-gray-50 rounded-sm border border-gray-200">
                         <div className="flex items-center gap-2">
                           <Shield className="w-4 h-4 text-gray-600" />
-                          <span className="text-sm text-gray-700">Restrição Obrigatória</span>
+                          <span className="text-sm text-gray-700">Restricao Obrigatoria</span>
                         </div>
                         <Switch checked={novaRestricao.obrigatoria} onCheckedChange={(checked) => setNovaRestricao({ ...novaRestricao, obrigatoria: checked })} />
                       </div>
@@ -231,7 +236,7 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
                       <Button
                         onClick={() => {
                           if (!novaRestricao.tipoMaquina1 || !novaRestricao.tipoMaquina2) {
-                            alert("Selecione ambos os tipos de máquina");
+                            alert("Selecione ambos os tipos de maquina");
                             return;
                           }
                           const restricao = {
@@ -257,7 +262,7 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
 
               {restricoes.length === 0 ? (
                 <div className="text-center py-2 text-gray-500">
-                  <p className="text-[9px]">Nenhuma restrição configurada</p>
+                  <p className="text-[9px]">Nenhuma restricao configurada</p>
                 </div>
               ) : (
                 <div className="space-y-1 max-h-24 overflow-y-auto">
@@ -268,7 +273,7 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
                           <Badge className={restricao.obrigatoria ? "bg-amber-100 text-amber-800 border border-amber-200 text-[9px] px-1 py-0" : "bg-blue-100 text-blue-800 border border-blue-200 text-[9px] px-1 py-0"}>
                             {restricao.obrigatoria ? (<><Shield className="w-2 h-2 mr-0.5" />Obrig.</>) : (<><Lightbulb className="w-2 h-2 mr-0.5" />Sugest.</>)}
                           </Badge>
-                          <span className="text-[9px] font-semibold text-gray-900">{restricao.tipoMaquina1} ↔ {restricao.tipoMaquina2}</span>
+                          <span className="text-[9px] font-semibold text-gray-900">{restricao.tipoMaquina1} {"<->"} {restricao.tipoMaquina2}</span>
                         </div>
                         <div className="text-[9px] text-gray-600">
                           {restricao.distanciaMaxima}p
@@ -289,3 +294,4 @@ export function LayoutConfigurador({ operacoes, onLayoutChange }: LayoutConfigur
     </div>
   );
 }
+

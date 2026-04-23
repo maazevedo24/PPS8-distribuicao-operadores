@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+﻿import { useState, useEffect, useCallback } from "react";
 import { Operador, Operacao, ConfiguracaoDistribuicao, Produto } from "../types";
 import { useNavigate } from "react-router";
 import { Button } from "../components/ui/button";
@@ -20,20 +20,20 @@ import {
   SelectValue,
 } from "../components/ui/select";
 
-// ─── Valores por defeito ──────────────────────────────────────────────────────
+// â”€â”€â”€ Valores por defeito â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const configPadrao = {
   possibilidade: 1 as 1 | 2 | 3 | 4,
   agruparMaquinas: false,
   cargaMaximaOperador: 95,
-  naoDividirMaiorQue: 0.9,
-  naoDividirMenorQue: 1.1,
+  naoDividirMaiorQue: 1.1,
+  naoDividirMenorQue: 0.9,
   horasTurno: 8,
   produtividadeEstimada: 85,
 };
 
 const layoutPadrao: LayoutConfig = {
-  tipoLayout: "espinha",
+  tipoLayout: "linha",
   postosPorLado: 8,
   distanciaMaxima: 3,
   permitirRetrocesso: false,
@@ -41,13 +41,13 @@ const layoutPadrao: LayoutConfig = {
   restricoes: [],
 };
 
-// ─── API Configuration ────────────────────────────────────────────────────────
+// â”€â”€â”€ API Configuration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const API_BASE_URL =
   ((import.meta as unknown as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL as string | undefined) ||
   "http://192.168.54.202:7860/api";
 
-// ─── Types and Helpers ────────────────────────────────────────────────────────
+// â”€â”€â”€ Types and Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface FamilyOption {
   id: string;
@@ -55,6 +55,15 @@ interface FamilyOption {
 }
 
 type ApiRecord = Record<string, any>;
+
+type DistItem = {
+  operadorId: string;
+  operacoes: string[];
+  cargaHoraria: number;
+  ocupacao: number;
+  ciclosPorHora: number;
+  temposOperacoes?: Record<string, number>;
+};
 
 const ensureArray = (value: unknown): ApiRecord[] => {
   if (Array.isArray(value)) return value as ApiRecord[];
@@ -80,7 +89,12 @@ const pickNumber = (obj: ApiRecord, keys: string[]): number | null => {
     const value = obj[key];
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value === "string" && value.trim()) {
-      const parsed = Number(value.replace(",", "."));
+      const normalized = value.trim().replace(",", ".");
+      const direct = Number(normalized);
+      if (Number.isFinite(direct)) return direct;
+
+      const matched = normalized.match(/-?\d+(?:\.\d+)?/);
+      const parsed = matched ? Number(matched[0]) : Number.NaN;
       if (Number.isFinite(parsed)) return parsed;
     }
   }
@@ -95,7 +109,7 @@ const pickBoolean = (obj: ApiRecord, keys: string[]): boolean | undefined => {
     if (typeof value === "string" && value.trim()) {
       const normalized = value.trim().toLowerCase();
       if (["true", "1", "yes", "sim"].includes(normalized)) return true;
-      if (["false", "0", "no", "nao", "não"].includes(normalized)) return false;
+      if (["false", "0", "no", "nao"].includes(normalized)) return false;
     }
   }
   return undefined;
@@ -113,6 +127,547 @@ const ensureRecord = (value: unknown): ApiRecord | null => {
     if (nestedRecord && typeof nestedRecord === "object") return nestedRecord as ApiRecord;
   }
   return null;
+};
+
+const normalizeKey = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const extractDigits = (value: string): string => {
+  const parts = value.match(/\d+/g);
+  return parts ? parts.join("") : "";
+};
+
+const mapOperatorToCode = (rawOperator: string, operadoresPool: Operador[]): string => {
+  const ref = rawOperator.trim();
+  if (!ref) return rawOperator;
+
+  const refKey = normalizeKey(ref);
+  const refDigits = extractDigits(ref);
+  const codeToken =
+    ref.match(/\(([A-Za-z]{1,}\d+)\)/)?.[1] ||
+    ref.match(/\b([A-Za-z]{1,}\d+)\b/)?.[1] ||
+    "";
+  const codeTokenKey = codeToken ? normalizeKey(codeToken) : "";
+
+  const exactById = operadoresPool.find((op) => normalizeKey(op.id) === refKey);
+  if (exactById) return exactById.id;
+
+  if (codeTokenKey) {
+    const byCodeToken = operadoresPool.find((op) => normalizeKey(op.id) === codeTokenKey);
+    if (byCodeToken) return byCodeToken.id;
+  }
+
+  const exactByNome = operadoresPool.find((op) => normalizeKey(op.nome || "") === refKey);
+  if (exactByNome) return exactByNome.id;
+
+  const byNomeParcial = operadoresPool.find((op) => {
+    const nomeKey = normalizeKey(op.nome || "");
+    if (!nomeKey) return false;
+    return nomeKey.includes(refKey) || refKey.includes(nomeKey);
+  });
+  if (byNomeParcial) return byNomeParcial.id;
+
+  if (refDigits) {
+    const byDigits = operadoresPool.find((op) => {
+      const opDigits = extractDigits(op.id);
+      return Boolean(opDigits) && (opDigits === refDigits || opDigits.endsWith(refDigits) || refDigits.endsWith(opDigits));
+    });
+    if (byDigits) return byDigits.id;
+  }
+
+  return ref;
+};
+
+const parseRawNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const normalized = value.trim().replace(",", ".");
+    const direct = Number(normalized);
+    if (Number.isFinite(direct)) return direct;
+    const matched = normalized.match(/-?\d+(?:\.\d+)?/);
+    const parsed = matched ? Number(matched[0]) : Number.NaN;
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  if (value && typeof value === "object") {
+    return pickNumber(value as ApiRecord, [
+      "value",
+      "time",
+      "tempo",
+      "seconds",
+      "time_seconds",
+      "time_min",
+      "minutes",
+    ]);
+  }
+  return null;
+};
+
+const findOperacaoIdByReferencia = (ref: string, operacoesBase: Operacao[]): string | null => {
+  const refKey = normalizeKey(ref);
+  if (!refKey) return null;
+
+  const direct = operacoesBase.find((op) => {
+    const idKey = normalizeKey(op.id);
+    const nomeKey = normalizeKey(op.nome);
+    return (
+      idKey === refKey ||
+      nomeKey === refKey ||
+      refKey.includes(idKey) ||
+      refKey.includes(nomeKey)
+    );
+  });
+  if (direct) return direct.id;
+
+  const token = ref
+    .split(/[\s\-:/()]+/)
+    .map((part) => normalizeKey(part))
+    .find(Boolean);
+  if (!token) return null;
+
+  const byToken = operacoesBase.find((op) => normalizeKey(op.id) === token || normalizeKey(op.nome) === token);
+  return byToken ? byToken.id : null;
+};
+
+const findRowOperationId = (row: ApiRecord, operacoesBase: Operacao[]): string | null => {
+  const fromKnownKeys =
+    pickString(row, [
+      "operation_code",
+      "operation_id",
+      "operacao_id",
+      "operation",
+      "operacao",
+      "operation_name",
+      "operacao_nome",
+      "name",
+      "nome",
+      "description",
+      "descricao",
+      "op",
+    ]) || "";
+
+  if (fromKnownKeys) {
+    const mapped = findOperacaoIdByReferencia(fromKnownKeys, operacoesBase);
+    if (mapped) return mapped;
+  }
+
+  for (const [key, value] of Object.entries(row)) {
+    const keyNorm = normalizeKey(key);
+    const looksOperationField =
+      keyNorm.includes("operac") ||
+      keyNorm.includes("operation") ||
+      keyNorm === "op" ||
+      keyNorm === "nome";
+    if (!looksOperationField) continue;
+    if (typeof value !== "string" && typeof value !== "number") continue;
+    const mapped = findOperacaoIdByReferencia(String(value), operacoesBase);
+    if (mapped) return mapped;
+  }
+
+  const seq = pickNumber(row, ["sequence", "sequencia", "seq", "order", "ordem"]);
+  if (seq != null) {
+    const bySeq = operacoesBase.find((op) => Number(op.sequencia) === Number(seq));
+    if (bySeq) return bySeq.id;
+  }
+
+  return null;
+};
+
+const extrairOperacoesPorReferencia = (raw: unknown, operacoesBase: Operacao[]): string[] => {
+  const refs: string[] = [];
+
+  const appendRef = (value: unknown) => {
+    if (typeof value === "string" || typeof value === "number") {
+      const text = String(value).trim();
+      if (!text) return;
+      if (typeof value === "string" && /[;,|]/.test(text)) {
+        text
+          .split(/[;,|]/)
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .forEach((part) => refs.push(part));
+        return;
+      }
+      refs.push(text);
+      return;
+    }
+
+    if (value && typeof value === "object") {
+      const record = value as ApiRecord;
+      const opId = pickString(record, ["operation_code", "operation_id", "operacao_id", "id", "code", "operation", "operacao"]);
+      const opName = pickString(record, ["operation_name", "operacao_nome", "name", "nome", "description", "descricao"]);
+      if (opId) refs.push(opId);
+      if (opName) refs.push(opName);
+    }
+  };
+
+  if (Array.isArray(raw)) raw.forEach(appendRef);
+  else appendRef(raw);
+
+  const mapped = new Set<string>();
+  refs.forEach((ref) => {
+    const opId = findOperacaoIdByReferencia(ref, operacoesBase);
+    if (opId) mapped.add(opId);
+  });
+  return Array.from(mapped);
+};
+
+const extrairOperacoesETemposDoRow = (
+  row: ApiRecord,
+  operacoesBase: Operacao[]
+): { operacoes: string[]; temposOperacoes: Record<string, number> } => {
+  const opsRaw = row.operations ?? row.operacoes ?? row.assigned_operations ?? row.assignedOperations;
+  const operacoes = new Set<string>();
+  const temposOperacoes: Record<string, number> = {};
+
+  const addOperacao = (ref: string, tempoMin?: number | null) => {
+    const opId = findOperacaoIdByReferencia(ref, operacoesBase);
+    if (!opId) return;
+    operacoes.add(opId);
+    if (typeof tempoMin === "number" && Number.isFinite(tempoMin) && tempoMin > 0) {
+      temposOperacoes[opId] = (temposOperacoes[opId] || 0) + tempoMin;
+    }
+  };
+
+  const parseTempoMin = (obj: ApiRecord): number | null => {
+    const tempoSegundos = pickNumber(obj, ["time_seconds", "tempo_segundos", "seconds", "duration_seconds"]);
+    const tempoMinDireto = pickNumber(obj, ["time_min", "time_minutes", "tempo_minutos", "minutes", "duration_min"]);
+    if (tempoMinDireto != null) return tempoMinDireto;
+    if (tempoSegundos != null) return tempoSegundos / 60;
+
+    const tempoLivre = obj.time ?? obj.tempo ?? obj.duration ?? obj.duracao;
+    const unidade = pickString(obj, ["time_unit", "unit", "unidade", "duration_unit"]).toLowerCase();
+
+    if (tempoLivre == null) return null;
+    const valor = parseRawNumber(tempoLivre);
+    if (valor == null || !Number.isFinite(valor) || valor <= 0) return null;
+
+    if (typeof tempoLivre === "string") {
+      const raw = tempoLivre.trim().toLowerCase();
+      if (/(min|mins|minuto|minutos)\b/.test(raw)) return valor;
+      if (/(sec|secs|seg|segs)\b/.test(raw) || /\d\s*s\b/.test(raw) || /s$/.test(raw)) return valor / 60;
+    }
+
+    if (unidade) {
+      if (/(min|mins|minuto|minutos)\b/.test(unidade)) return valor;
+      if (/(sec|secs|seg|segs|s)\b/.test(unidade)) return valor / 60;
+    }
+
+    // Fallback: "time" vindo da API costuma estar em segundos.
+    return valor > 10 ? valor / 60 : valor;
+  };
+
+  const processEntry = (entry: unknown) => {
+    if (typeof entry === "string" || typeof entry === "number") {
+      addOperacao(String(entry));
+      return;
+    }
+
+    if (!entry || typeof entry !== "object") return;
+
+    const obj = entry as ApiRecord;
+    const ref =
+      pickString(obj, ["operation_code", "operation_id", "operacao_id", "id", "code", "operation", "operacao", "op"]) ||
+      pickString(obj, ["operation_name", "operacao_nome", "name", "nome", "description", "descricao"]);
+
+    if (ref) {
+      addOperacao(ref, parseTempoMin(obj));
+      return;
+    }
+
+    // Some payloads can send an object keyed by operation code/name.
+    Object.entries(obj).forEach(([key, value]) => {
+      if (typeof value === "number") {
+        addOperacao(key, value);
+        return;
+      }
+      if (typeof value === "string") {
+        const parsed = Number(value.replace(",", ".").match(/-?\d+(?:\.\d+)?/)?.[0] ?? "");
+        addOperacao(key, Number.isFinite(parsed) ? parsed : undefined);
+      }
+    });
+  };
+
+  if (Array.isArray(opsRaw)) opsRaw.forEach(processEntry);
+  else if (opsRaw != null) processEntry(opsRaw);
+
+  if (operacoes.size === 0) {
+    const operacaoDireta =
+      pickString(row, ["operation_code", "operation_id", "operacao_id", "operation", "operacao", "id", "code"]) ||
+      pickString(row, ["operation_name", "operacao_nome", "name", "nome", "description", "descricao"]);
+    if (operacaoDireta) {
+      const opId = findOperacaoIdByReferencia(operacaoDireta, operacoesBase);
+      if (opId) operacoes.add(opId);
+    }
+  }
+
+  if (operacoes.size === 0) {
+    extrairOperacoesPorReferencia(opsRaw, operacoesBase).forEach((opId) => operacoes.add(opId));
+  }
+
+  return { operacoes: Array.from(operacoes), temposOperacoes };
+};
+
+const extrairDistribuicaoDeTableData = (
+  raw: ApiRecord,
+  operacoesBase: Operacao[],
+  tempoCiclo: number,
+  operadoresPool: Operador[]
+): DistItem[] => {
+  const tableDataRaw =
+    raw.table_data ??
+    raw.tableData ??
+    raw.operator_table ??
+    raw.operatorTable ??
+    raw.results_table;
+
+  let tableData = ensureArray(tableDataRaw);
+  if (
+    tableData.length === 0 &&
+    tableDataRaw &&
+    typeof tableDataRaw === "object" &&
+    !Array.isArray(tableDataRaw)
+  ) {
+    tableData = Object.entries(tableDataRaw as Record<string, unknown>).map(([key, value]) => {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        return { operator: key, ...(value as ApiRecord) };
+      }
+      return { operator: key, occupancy: value };
+    });
+  }
+
+  if (tableData.length === 0) return [];
+
+  const reservedRowKeys = new Set(
+    [
+      "grupo",
+      "group",
+      "seq",
+      "sequencia",
+      "sequencia_op",
+      "sequence",
+      "maquina",
+      "machine",
+      "machine_name",
+      "tipo_maquina",
+      "operacao",
+      "operation",
+      "operation_code",
+      "operation_id",
+      "operation_name",
+      "operacao_id",
+      "operacao_nome",
+      "ocup",
+      "ocupacao",
+      "occupancy",
+      "occupancy_percent",
+      "operator_occupancy",
+      "worker_occupancy",
+      "tempo",
+      "tempo_segundos",
+      "time_seconds",
+      "time_min",
+      "time_minutes",
+      "minutes",
+      "seconds",
+      "subtotal",
+      "total",
+      "linha",
+      "line",
+      "line_type",
+      "balanced",
+      "is_balanced",
+      "status",
+      "ok",
+      "critical",
+      "critical_op",
+      "critical_operation",
+    ].map((key) => normalizeKey(key))
+  );
+
+  const agrupado: Record<
+    string,
+    { operacoes: Set<string>; cargaHoraria: number; ocupacao?: number; temposOperacoes: Record<string, number> }
+  > = {};
+
+  const ensureOperador = (operadorId: string, ocupacao?: number) => {
+    if (!agrupado[operadorId]) {
+      agrupado[operadorId] = {
+        operacoes: new Set<string>(),
+        cargaHoraria: 0,
+        ocupacao,
+        temposOperacoes: {},
+      };
+    }
+  };
+
+  const operadorExisteNoPool = (id: string): boolean =>
+    operadoresPool.some((operador) => normalizeKey(operador.id) === normalizeKey(id));
+
+  const fallbackOperatorByColumn = new Map<string, string>();
+  const fallbackOperatorsUsed = new Set<string>();
+
+  const resolveMatrixColumnOperatorId = (colKey: string): string | null => {
+    const colNorm = normalizeKey(colKey);
+    if (!colNorm) return null;
+
+    const mapped = mapOperatorToCode(String(colKey), operadoresPool);
+    if (operadorExisteNoPool(mapped)) return mapped;
+    if (operadorExisteNoPool(String(colKey))) return mapOperatorToCode(String(colKey), operadoresPool);
+
+    const memo = fallbackOperatorByColumn.get(colNorm);
+    if (memo && operadorExisteNoPool(memo)) return memo;
+
+    const nextFallback = operadoresPool.find((operador) => !fallbackOperatorsUsed.has(operador.id));
+    if (nextFallback) {
+      fallbackOperatorByColumn.set(colNorm, nextFallback.id);
+      fallbackOperatorsUsed.add(nextFallback.id);
+      return nextFallback.id;
+    }
+
+    return null;
+  };
+
+  tableData.forEach((row) => {
+    const extracted = extrairOperacoesETemposDoRow(row, operacoesBase);
+    const operacaoDaLinha = findRowOperationId(row, operacoesBase);
+    const operacoes = new Set<string>(extracted.operacoes);
+    if (operacaoDaLinha) operacoes.add(operacaoDaLinha);
+    const temposOperacoes: Record<string, number> = { ...extracted.temposOperacoes };
+
+    // table_data matrix mode: each row is an operation and each operator is a dedicated column
+    if (operacoes.size === 1) {
+      const operacaoId = Array.from(operacoes)[0];
+      const tempoOperacaoBase = operacoesBase.find((op) => op.id === operacaoId)?.tempo ?? 0;
+
+      const valoresPorOperador: Array<{ operadorId: string; tempoRaw: number }> = [];
+      Object.entries(row).forEach(([colKey, rawValue]) => {
+        const colKeyNorm = normalizeKey(colKey);
+        if (!colKeyNorm || reservedRowKeys.has(colKeyNorm)) return;
+
+        const mappedOperator = resolveMatrixColumnOperatorId(colKey);
+        if (!mappedOperator) return;
+
+        const tempoRaw = parseRawNumber(rawValue);
+        if (tempoRaw == null || !Number.isFinite(tempoRaw) || tempoRaw <= 0) return;
+        valoresPorOperador.push({ operadorId: mappedOperator, tempoRaw });
+      });
+
+      if (valoresPorOperador.length > 0) {
+        const totalRaw = valoresPorOperador.reduce((sum, v) => sum + v.tempoRaw, 0);
+        const usarSegundosParaMinutos = tempoOperacaoBase > 0 && totalRaw > tempoOperacaoBase * 2.5;
+        const fator = usarSegundosParaMinutos ? 1 / 60 : 1;
+
+        valoresPorOperador.forEach(({ operadorId, tempoRaw }) => {
+          ensureOperador(operadorId);
+          const tempoMin = tempoRaw * fator;
+          agrupado[operadorId].operacoes.add(operacaoId);
+          agrupado[operadorId].cargaHoraria += tempoMin;
+          agrupado[operadorId].temposOperacoes[operacaoId] =
+            (agrupado[operadorId].temposOperacoes[operacaoId] || 0) + tempoMin;
+        });
+        return;
+      }
+    }
+
+    const operadorOriginal = pickString(row, ["operator", "operator_id", "operador", "operador_id"]);
+    if (!operadorOriginal) return;
+    const operadorId = mapOperatorToCode(operadorOriginal, operadoresPool);
+
+    const ocupacaoRaw = pickNumber(row, [
+      "occupancy",
+      "occupancy_percent",
+      "operator_occupancy",
+      "worker_occupancy",
+      "ocupacao",
+      "utilization",
+      "load",
+    ]);
+    const ocupacao = ocupacaoRaw == null ? undefined : ocupacaoRaw <= 1 ? ocupacaoRaw * 100 : ocupacaoRaw;
+
+    const tempoSegundos = pickNumber(row, ["time_seconds", "tempo_segundos", "seconds"]);
+    const tempoMinutosDireto = pickNumber(row, [
+      "time_min",
+      "time_minutes",
+      "tempo_minutos",
+      "minutes",
+      "workload_minutes",
+      "workload_min",
+      "carga_horaria",
+    ]);
+    const tempoSomaOperacoes = Object.values(temposOperacoes).reduce((sum, value) => sum + value, 0);
+    const tempoMinutos =
+      tempoMinutosDireto ??
+      (tempoSegundos != null ? tempoSegundos / 60 : null) ??
+      (tempoSomaOperacoes > 0 ? tempoSomaOperacoes : null) ??
+      (ocupacao != null && tempoCiclo > 0 ? (tempoCiclo * ocupacao) / 100 : 0);
+
+    ensureOperador(operadorId, ocupacao);
+
+    operacoes.forEach((opId) => agrupado[operadorId].operacoes.add(opId));
+    Object.entries(temposOperacoes).forEach(([opId, tempoMin]) => {
+      agrupado[operadorId].temposOperacoes[opId] = (agrupado[operadorId].temposOperacoes[opId] || 0) + tempoMin;
+    });
+
+    agrupado[operadorId].cargaHoraria += Math.max(0, tempoMinutos || 0);
+    if (ocupacao != null) agrupado[operadorId].ocupacao = ocupacao;
+  });
+
+  return Object.entries(agrupado).map(([operadorId, dados]) => {
+    const ocupacaoCalculada =
+      dados.ocupacao != null
+        ? dados.ocupacao
+        : tempoCiclo > 0
+          ? (dados.cargaHoraria / tempoCiclo) * 100
+          : 0;
+
+    return {
+      operadorId,
+      operacoes: Array.from(dados.operacoes),
+      cargaHoraria: dados.cargaHoraria,
+      ocupacao: ocupacaoCalculada,
+      ciclosPorHora: dados.cargaHoraria > 0 ? 60 / dados.cargaHoraria : 0,
+      temposOperacoes: dados.temposOperacoes,
+    };
+  });
+};
+
+const extrairMensagemErro = (error: unknown): string => {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as
+      | { detail?: unknown; message?: string; error?: string }
+      | undefined;
+
+    if (Array.isArray(data?.detail)) {
+      const linhas = data.detail
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const detail = item as { loc?: unknown; msg?: unknown; input?: unknown };
+          const loc = Array.isArray(detail.loc)
+            ? detail.loc
+                .map((part) => (typeof part === "string" || typeof part === "number" ? String(part) : ""))
+                .filter(Boolean)
+                .join(".")
+            : "";
+          const msg = typeof detail.msg === "string" ? detail.msg : "Erro de validacao";
+          const input = detail.input != null ? ` (input: ${String(detail.input)})` : "";
+          return loc ? `${loc}: ${msg}${input}` : `${msg}${input}`;
+        })
+        .filter((line): line is string => Boolean(line));
+      if (linhas.length > 0) return linhas.join("\n");
+    }
+
+    if (typeof data?.detail === "string" && data.detail.trim()) return data.detail;
+    if (typeof data?.message === "string" && data.message.trim()) return data.message;
+    if (typeof data?.error === "string" && data.error.trim()) return data.error;
+    if (typeof error.message === "string" && error.message.trim()) return error.message;
+  }
+
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return "Ocorreu um erro inesperado.";
 };
 
 const mapApiOperation = (raw: ApiRecord, index: number): Operacao =>
@@ -169,20 +724,20 @@ function criarUnidadePadrao(operadores: Operador[]) {
   };
 }
 
-// ─── Componente ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ Componente â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default function Home() {
   const navigate = useNavigate();
   const { dados, salvar } = useStorage();
 
-  // ── Operadores vêm SEMPRE do contexto (fonte de verdade única) ────────────
+  // â”€â”€ Operadores vem SEMPRE do contexto (fonte de verdade unica) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Nunca importar operadoresMock directamente aqui
   const operadoresMaster = dados.operadores;
 
-  // Ler configuração guardada
+  // Ler configuracao guardada
   const confGuardada = dados.configuracao;
 
-  // ─── Estado local (inicializado a partir do contexto) ─────────────────────
+  // â”€â”€â”€ Estado local (inicializado a partir do contexto) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const [unidadeAtiva, setUnidadeAtiva] = useState<1 | 2 | 3>(1);
 
@@ -223,11 +778,11 @@ export default function Home() {
     return { 1: u1, 2: u2, 3: u3 };
   });
 
-  // ── Sincronizar com o contexto quando os dados carregam do ficheiro ───────
+  // â”€â”€ Sincronizar com o contexto quando os dados carregam do ficheiro â”€â”€â”€â”€â”€â”€â”€
 
   const [sincronizado, setSincronizado] = useState(false);
 
-  // ── API: Famílias e Fichas Técnicas ──────────────────────────────────────────
+  // â”€â”€ API: Familias e Fichas Tecnicas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [familias, setFamilias] = useState<FamilyOption[]>([]);
   const [loadingFamilias, setLoadingFamilias] = useState(false);
   const [produtosApi, setProdutosApi] = useState<Produto[]>([]);
@@ -274,8 +829,8 @@ export default function Home() {
     }));
   }, [dados, sincronizado]);
 
-  // Quando a lista de operadores no contexto muda (ex: apagar em Configuração),
-  // actualizar as unidades para reflectir a mudança
+  // Quando a lista de operadores no contexto muda (ex: apagar em Configuracao),
+  // actualizar as unidades para reflectir a mudanca
   useEffect(() => {
     const ops = dados.operadores;
     setDadosUnidades((prev) => ({
@@ -285,7 +840,7 @@ export default function Home() {
     }));
   }, [dados.operadores]);
 
-  // ─── Auto-save em cada mudança de estado ─────────────────────────────────
+  // â”€â”€â”€ Auto-save em cada mudanca de estado â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const guardarConfiguracaoAtual = useCallback(() => {
     salvar({
@@ -318,7 +873,7 @@ export default function Home() {
     guardarConfiguracaoAtual();
   }, [guardarConfiguracaoAtual]);
 
-  // ── Load families from API ───────────────────────────────────────────────────
+  // â”€â”€ Load families from API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     const carregarFamilias = async () => {
       setLoadingFamilias(true);
@@ -352,7 +907,7 @@ export default function Home() {
     carregarFamilias();
   }, []);
 
-  // ── Load technical sheets for selected family ────────────────────────────────
+  // â”€â”€ Load technical sheets for selected family â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     if (!grupoArtigoSelecionado) {
       setProdutosApi([]);
@@ -387,7 +942,7 @@ export default function Home() {
     carregarFichas();
   }, [grupoArtigoSelecionado]);
 
-  // ── Load detailed sheet by code ──────────────────────────────────────────────
+  // â”€â”€ Load detailed sheet by code â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleCarregarFichaPorCodigo = async (
     produtoId: string,
     sourceProdutos: Produto[] = produtosApi
@@ -448,7 +1003,7 @@ export default function Home() {
     void handleCarregarFichaPorCodigo(produtoId);
   };
 
-  // ─── Atalhos ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€ Atalhos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const operadores = dadosUnidades[unidadeAtiva].operadores;
   const operadoresSelecionados = dadosUnidades[unidadeAtiva].operadoresSelecionados;
@@ -459,8 +1014,60 @@ export default function Home() {
   const operacoes = config.possibilidade === 4
     ? operacoesManual
     : (produto ? produto.operacoes : []);
+  const usarAllocateModo1Api = config.possibilidade === 1;
+  const taskCodeSelecionado = (produto?.referencia || produto?.id || grupoArtigoSelecionado || "").trim();
 
-  // ─── Handlers ─────────────────────────────────────────────────────────────
+  // Sincroniza operadores com a ficha tecnica activa (quando muda de ficha/operacoes)
+  useEffect(() => {
+    if (config.possibilidade === 4 || !produto || operacoes.length === 0 || operadores.length === 0) return;
+
+    const nomesOperacoes = new Set(
+      operacoes
+        .map((op) => op.nome?.trim())
+        .filter((nome): nome is string => Boolean(nome))
+    );
+    if (nomesOperacoes.size === 0) return;
+
+    const operadoresCapazes = operadores
+      .filter((operador) =>
+        Object.values(operador.competencias || {}).some(
+          (comp) => comp && comp.operacao && nomesOperacoes.has(comp.operacao)
+        )
+      )
+      .map((operador) => operador.id);
+
+    const novosSelecionados = operadoresCapazes.length > 0
+      ? operadoresCapazes
+      : operadores.map((operador) => operador.id);
+
+    setDadosUnidades((prev) => {
+      const unidadeAtual = prev[unidadeAtiva];
+      const atuais = new Set(unidadeAtual.operadoresSelecionados);
+      const novos = new Set(novosSelecionados);
+      const iguais = atuais.size === novos.size && [...novos].every((id) => atuais.has(id));
+      if (iguais) return prev;
+
+      return {
+        ...prev,
+        [unidadeAtiva]: {
+          ...unidadeAtual,
+          operadoresSelecionados: novosSelecionados,
+          config:
+            unidadeAtual.config.possibilidade === 3
+              ? {
+                  ...unidadeAtual.config,
+                  numeroOperadores: Math.min(
+                    unidadeAtual.config.numeroOperadores || novosSelecionados.length,
+                    novosSelecionados.length
+                  ),
+                }
+              : unidadeAtual.config,
+        },
+      };
+    });
+  }, [config.possibilidade, operacoes, operadores, produto, unidadeAtiva]);
+
+  // â”€â”€â”€ Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const handleToggleOperador = (id: string) => {
     setDadosUnidades((prev) => ({
@@ -544,17 +1151,160 @@ export default function Home() {
         operadoresSelecionados.includes(op.id)
       );
 
-      if (config.possibilidade !== 4 && operadoresDisponiveis.length === 0) {
+      if (!usarAllocateModo1Api && config.possibilidade !== 4 && operadoresDisponiveis.length === 0) {
         alert("Por favor, selecione pelo menos um operador.");
         return;
       }
 
       if (operacoes.length === 0) {
-        alert("Por favor, selecione um produto com operações.");
+        alert("Por favor, selecione um produto com operacoes.");
         return;
       }
+      const identificadorFicha = produto?.referencia || produto?.id || taskCodeSelecionado || "ficha selecionada";
+      const confirmou = window.confirm(`Confirmar balanceamento para ${identificadorFicha}?`);
+      if (!confirmou) return;
+      // Modo 1: usar endpoint automatico (sequencial ou agrupado por maquina)
+      if (usarAllocateModo1Api) {
+        if (!taskCodeSelecionado) {
+          alert("Nao foi possivel identificar o codigo da ficha tecnica para calcular.");
+          return;
+        }
 
-      // ── Modo Custom (possibilidade 4): usar API allocate-custom ─────────────
+        const normalizarRatio = (valor: number) => {
+          if (!Number.isFinite(valor)) return 0;
+          return valor > 1 ? valor / 100 : valor;
+        };
+        const limitNotDivideUpper = Math.max(1.01, Number(config.naoDividirMaiorQue) || 1.1);
+        const limitNotDivideLower = Math.min(0.99, Math.max(0, Number(config.naoDividirMenorQue) || 0.9));
+
+        const payloadBase = {
+          efficiency: normalizarRatio(config.produtividadeEstimada),
+          work_hours: config.horasTurno,
+          limit_not_assign: normalizarRatio(config.cargaMaximaOperador),
+          limit_not_divide_upper: limitNotDivideUpper,
+          limit_not_divide_lower: limitNotDivideLower,
+          line_type: layoutConfig.tipoLayout,
+        };
+        const payload = config.agruparMaquinas
+          ? {
+              ...payloadBase,
+              max_position_deviation: Math.max(1, Number(layoutConfig.distanciaMaxima) || 1),
+              position_deviation_mode: layoutConfig.permitirRetrocesso ? "both" : "forward",
+            }
+          : payloadBase;
+        const endpointModo1 = config.agruparMaquinas ? "allocate-grouped" : "allocate";
+
+        const resposta = await axios.post(
+          `${API_BASE_URL}/tasks/${encodeURIComponent(taskCodeSelecionado)}/${endpointModo1}`,
+          payload
+        );
+        const r = ensureRecord(resposta.data) ?? {};
+
+        const taktTime = (pickNumber(r, ["takt_time_seconds", "takt_time", "taktTime"]) ?? 0) / 60;
+        const tempoCicloApi = pickNumber(r, ["real_cycle_time_seconds", "cycle_time_seconds", "cycle_time", "tempo_ciclo_segundos"]);
+        const tempoCiclo = tempoCicloApi != null
+          ? (tempoCicloApi > 10 ? tempoCicloApi / 60 : tempoCicloApi)
+          : 0;
+        const numeroCiclosPorHora = pickNumber(r, ["production_per_hour", "numero_ciclos_por_hora"]) ?? (tempoCiclo > 0 ? 60 / tempoCiclo : 0);
+        const produtividadeRaw = pickNumber(r, ["estimated_productivity", "productivity", "produtividade_estimada"]) ?? 0;
+        const produtividade = produtividadeRaw <= 1 ? produtividadeRaw * 100 : produtividadeRaw;
+        const perdas = Math.max(0, 100 - produtividade);
+
+        const assignments = ensureArray(
+          r.assignments ??
+          r.allocations ??
+          r.operator_allocations ??
+          r.operator_assignments ??
+          r.distribution ??
+          r.distribuicao
+        );
+
+        let distribuicao = extrairDistribuicaoDeTableData(r, operacoes, tempoCiclo, operadoresDisponiveis);
+        const mapa: Record<string, { operacoes: Set<string>; tempoTotal: number; temposOperacoes: Record<string, number> }> = {};
+
+        if (distribuicao.length === 0) {
+          for (const item of assignments) {
+            const operadorRef = pickString(item, ["operator_id", "operador_id", "operator", "operador"]);
+            if (!operadorRef) continue;
+            const operadorId = mapOperatorToCode(operadorRef, operadoresDisponiveis);
+
+            const operacaoRef =
+              pickString(item, ["operation_code", "operation_id", "operacao_id", "operation", "operacao"]) ||
+              pickString(item, ["operation_name", "operacao_nome", "name", "nome"]);
+            const operacaoId = operacaoRef ? findOperacaoIdByReferencia(operacaoRef, operacoes) || operacaoRef : "";
+
+            const tempoSegundos = pickNumber(item, ["time_seconds", "tempo_segundos", "seconds"]);
+            const tempoMinutos = tempoSegundos != null
+              ? tempoSegundos / 60
+              : (pickNumber(item, ["time_min", "time_minutes", "tempo_minutos", "minutes"]) ?? 0);
+
+            if (!mapa[operadorId]) mapa[operadorId] = { operacoes: new Set(), tempoTotal: 0, temposOperacoes: {} };
+            if (operacaoId) mapa[operadorId].operacoes.add(operacaoId);
+            mapa[operadorId].tempoTotal += tempoMinutos;
+            if (operacaoId) {
+              mapa[operadorId].temposOperacoes[operacaoId] = (mapa[operadorId].temposOperacoes[operacaoId] || 0) + tempoMinutos;
+            }
+          }
+        } else {
+          for (const dist of distribuicao) {
+            mapa[dist.operadorId] = {
+              operacoes: new Set(dist.operacoes),
+              tempoTotal: dist.cargaHoraria,
+              temposOperacoes: { ...(dist.temposOperacoes || {}) },
+            };
+          }
+        }
+
+        let numeroOperadores =
+          pickNumber(r, ["num_operators", "numero_operadores", "numeroOperadores"]) ??
+          Object.keys(mapa).length;
+
+        if (Object.keys(mapa).length === 0 && numeroOperadores > 0) {
+          for (let i = 1; i <= numeroOperadores; i++) {
+            const operadorId = `OP${String(i).padStart(2, "0")}`;
+            mapa[operadorId] = { operacoes: new Set(), tempoTotal: 0, temposOperacoes: {} };
+          }
+        }
+
+        if (distribuicao.length === 0) {
+          distribuicao = Object.entries(mapa).map(([operadorId, dados]) => ({
+            operadorId,
+            operacoes: Array.from(dados.operacoes),
+            cargaHoraria: dados.tempoTotal,
+            ocupacao: tempoCiclo > 0 ? (dados.tempoTotal / tempoCiclo) * 100 : 0,
+            ciclosPorHora: dados.tempoTotal > 0 ? 60 / dados.tempoTotal : 0,
+            temposOperacoes: dados.temposOperacoes,
+          }));
+        }
+
+        if (!numeroOperadores) numeroOperadores = distribuicao.length;
+        const ocupacaoTotal =
+          pickNumber(r, ["occupancy_total", "ocupacao_total", "total_occupancy", "total_load"]) ??
+          distribuicao.reduce((sum, dist) => sum + dist.cargaHoraria * 60, 0);
+
+        const resultadosApi = {
+          distribuicao,
+          taktTime,
+          tempoCiclo,
+          numeroCiclosPorHora,
+          produtividade,
+          perdas,
+          numeroOperadores,
+          ocupacaoTotal,
+        };
+
+        const dataToPass = {
+          resultados: resultadosApi,
+          operadores: operadoresDisponiveis,
+          operacoes,
+          config,
+          layoutConfig,
+        };
+
+        sessionStorage.setItem("balanceamentoData", JSON.stringify(dataToPass));
+        navigate("/resultados", { state: dataToPass });
+        return;
+      }
       if (config.possibilidade === 4) {
         const assignments: {
           machine_name: string;
@@ -589,9 +1339,9 @@ export default function Home() {
           }
         }
 
-        const taskCode = grupoArtigoSelecionado || "custom";
+        const taskCode = taskCodeSelecionado || grupoArtigoSelecionado || "custom";
         const resposta = await axios.post(
-          `http://192.168.54.202:7860/api/tasks/${taskCode}/allocate-custom`,
+          `${API_BASE_URL}/tasks/${encodeURIComponent(taskCode)}/allocate-custom`,
           { assignments }
         );
         const r = resposta.data;
@@ -601,23 +1351,19 @@ export default function Home() {
         const tempoCiclo = r.real_cycle_time_seconds != null ? r.real_cycle_time_seconds / 60 : (r.cycle_time ?? r.tempoCiclo ?? 0);
         const numeroCiclosPorHora = r.production_per_hour ?? (tempoCiclo > 0 ? 60 / tempoCiclo : 0);
         const produtividade = r.estimated_productivity ?? 0;
-        const perdas = NaN; // não disponível neste modo
+        const perdas = NaN; // nao disponÃ­vel neste modo
         const numeroOperadores = r.num_operators ?? r.numero_operadores ?? r.numeroOperadores ?? new Set(assignments.map((a) => a.operator_id).filter(Boolean)).size;
 
-        // Construir distribuicao por operador a partir dos assignments enviados (por operação)
-        type DistItem = {
-          operadorId: string;
-          operacoes: string[];
-          cargaHoraria: number;
-          ocupacao: number;
-          ciclosPorHora: number;
-        };
-        const mapa: Record<string, { operacoes: Set<string>; tempoTotal: number }> = {};
+        // Construir distribuicao por operador a partir dos assignments enviados (por operacao)
+        const mapa: Record<string, { operacoes: Set<string>; tempoTotal: number; temposOperacoes: Record<string, number> }> = {};
         for (const a of assignments) {
           if (!a.operator_id) continue;
-          if (!mapa[a.operator_id]) mapa[a.operator_id] = { operacoes: new Set(), tempoTotal: 0 };
-          mapa[a.operator_id].operacoes.add(a.operation_code);
-          mapa[a.operator_id].tempoTotal += a.time_seconds / 60;
+          const operadorId = mapOperatorToCode(a.operator_id, operadoresDisponiveis);
+          if (!mapa[operadorId]) mapa[operadorId] = { operacoes: new Set(), tempoTotal: 0, temposOperacoes: {} };
+          mapa[operadorId].operacoes.add(a.operation_code);
+          mapa[operadorId].tempoTotal += a.time_seconds / 60;
+          mapa[operadorId].temposOperacoes[a.operation_code] =
+            (mapa[operadorId].temposOperacoes[a.operation_code] || 0) + a.time_seconds / 60;
         }
         const distribuicao: DistItem[] = Object.entries(mapa).map(([operadorId, dados]) => ({
           operadorId,
@@ -625,7 +1371,11 @@ export default function Home() {
           cargaHoraria: dados.tempoTotal,
           ocupacao: tempoCiclo > 0 ? (dados.tempoTotal / tempoCiclo) * 100 : 0,
           ciclosPorHora: dados.tempoTotal > 0 ? 60 / dados.tempoTotal : 0,
+          temposOperacoes: dados.temposOperacoes,
         }));
+        const ocupacaoTotal =
+          pickNumber(r, ["occupancy_total", "ocupacao_total", "total_occupancy", "total_load"]) ??
+          distribuicao.reduce((sum, dist) => sum + dist.cargaHoraria * 60, 0);
 
         const resultadosCustom = {
           distribuicao,
@@ -635,6 +1385,7 @@ export default function Home() {
           produtividade,
           perdas,
           numeroOperadores,
+          ocupacaoTotal,
         };
 
         const dataToPass = {
@@ -683,7 +1434,7 @@ export default function Home() {
       // Guardar no localStorage (via historico.ts)
       salvarHistorico(novoRegisto);
 
-      // Guardar no ficheiro — inclui configuração actual + histórico actualizado
+      // Guardar no ficheiro - inclui configuracao actual + historico actualizado
       await salvar({
         configuracao: {
           grupoArtigoSelecionado,
@@ -713,14 +1464,14 @@ export default function Home() {
       navigate("/resultados", { state: dataToPass });
     } catch (error) {
       console.error("Erro ao calcular balanceamento:", error);
-      alert("Erro ao calcular balanceamento.");
+      alert(`Erro ao calcular balanceamento:\n${extrairMensagemErro(error)}`);
     }
   };
 
   const tempoTotal = operacoes.reduce((sum, op) => sum + op.tempo, 0);
   const [gamaExpandida, setGamaExpandida] = useState(false);
 
-  // ─── Render ───────────────────────────────────────────────────────────────
+  // â”€â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   return (
     <main className="w-full px-6 py-8 space-y-8">
@@ -746,7 +1497,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Cards de métricas */}
+      {/* Cards de mÃ©tricas */}
       <div className="grid grid-cols-3 gap-4">
         <div className="bg-white p-6 rounded-sm border border-gray-200">
           <div className="flex items-center gap-3 mb-2">
@@ -765,7 +1516,7 @@ export default function Home() {
               <Package className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <div className="text-xs text-gray-500 uppercase">Operações</div>
+              <div className="text-xs text-gray-500 uppercase">Operacoes</div>
               <div className="text-2xl font-bold text-gray-900">{operacoes.length}</div>
             </div>
           </div>
@@ -776,7 +1527,7 @@ export default function Home() {
               <Factory className="w-5 h-5 text-purple-600" />
             </div>
             <div>
-              <div className="text-xs text-gray-500 uppercase">Máquinas</div>
+              <div className="text-xs text-gray-500 uppercase">Maquinas</div>
               <div className="text-2xl font-bold text-gray-900">
                 {operacoes.length > 0
                   ? new Set(operacoes.map((op) => op.tipoMaquina)).size
@@ -787,7 +1538,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Seleção de Grupo de Artigo */}
+      {/* Selecao de Grupo de Artigo */}
       {config.possibilidade !== 4 && erroApi && (
         <div className="p-3 bg-amber-50 border border-amber-200 rounded-sm flex items-center gap-2 text-amber-700 text-sm">
           <AlertTriangle className="w-4 h-4" />
@@ -822,7 +1573,7 @@ export default function Home() {
 
             <div className="space-y-2">
               <Label className="text-xs font-semibold uppercase text-gray-600">
-                Ficha Técnica
+                Ficha Tecnica
               </Label>
               <Select
                 value={produtoSelecionado || undefined}
@@ -834,7 +1585,7 @@ export default function Home() {
                     placeholder={
                       loadingFichas ? "A carregar fichas..." :
                       loadingFichaPorCodigo ? "A carregar detalhes..." :
-                      "Selecione uma ficha técnica"
+                      "Selecione uma ficha tecnica"
                     }
                   />
                 </SelectTrigger>
@@ -853,14 +1604,14 @@ export default function Home() {
           {produto && (
             <div className="text-xs text-gray-500 mt-3">
               Tempo total: <span className="font-mono">{operacoes.reduce((s, op) => s + op.tempo, 0).toFixed(2)} min</span>
-              <span className="mx-2">·</span>
-              <span>{operacoes.length} operações</span>
+              <span className="mx-2"> - </span>
+              <span>{operacoes.length} operacoes</span>
             </div>
           )}
         </div>
       )}
 
-      {/* Configuração de Distribuição */}
+      {/* Configuracao de Distribuicao */}
       <ConfiguracaoDistribuicaoComponent
         config={config}
         onChange={handleConfigChange}
@@ -869,7 +1620,7 @@ export default function Home() {
         onCalcularOperadoresNecessarios={handleCalcularOperadoresNecessarios}
       />
 
-      {/* Tabela de Operações Manual */}
+      {/* Tabela de Operacoes Manual */}
       {config.possibilidade === 4 && (
         <div className="bg-white p-5 rounded-sm border border-gray-200 shadow-sm">
           <div className="flex items-center gap-3 mb-4">
@@ -877,9 +1628,9 @@ export default function Home() {
               <Edit3 className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-gray-900">Entrada Manual de Operações</h3>
+              <h3 className="text-base font-semibold text-gray-900">Entrada Manual de Operacoes</h3>
               <p className="text-xs text-gray-500 mt-0.5">
-                Preencha os dados das operações directamente na tabela
+                Preencha os dados das operacoes directamente na tabela
               </p>
             </div>
           </div>
@@ -908,16 +1659,16 @@ export default function Home() {
         </div>
       )}
 
-      {/* Parâmetros de Balanceamento */}
+      {/* Parametros de Balanceamento */}
       {config.possibilidade !== 4 && (
         <div className="shadow-sm border border-gray-200 rounded-sm bg-white">
           <div className="p-5 border-b border-gray-200">
             <div className="flex items-center gap-2">
               <Calculator className="w-5 h-5 text-gray-700" />
               <div>
-                <h3 className="text-base font-semibold text-gray-900">Parâmetros de Balanceamento</h3>
+                <h3 className="text-base font-semibold text-gray-900">Parametros de Balanceamento</h3>
                 <p className="text-xs text-gray-500 font-normal mt-0.5">
-                  Parâmetros de entrada conforme o método selecionado
+                  Parametros de entrada conforme o metodo selecionado
                 </p>
               </div>
             </div>
@@ -950,14 +1701,16 @@ export default function Home() {
                         className="bg-white border border-gray-300 px-4 py-3 text-sm text-gray-900 font-semibold rounded-r-sm w-32 text-right focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                       />
                     </div>
-                    <div className="flex items-stretch">
-                      <div className="bg-gray-100 border border-gray-200 px-4 py-3 flex items-center rounded-l-sm flex-1">
-                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Nº de Operadores</span>
+                    {!usarAllocateModo1Api && (
+                      <div className="flex items-stretch">
+                        <div className="bg-gray-100 border border-gray-200 px-4 py-3 flex items-center rounded-l-sm flex-1">
+                          <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Numero de Operadores</span>
+                        </div>
+                        <div className="bg-gray-50 border border-gray-300 px-4 py-3 text-sm text-gray-900 font-semibold rounded-r-sm w-32 text-right font-mono flex items-center justify-end">
+                          {operadoresSelecionados.length}
+                        </div>
                       </div>
-                      <div className="bg-gray-50 border border-gray-300 px-4 py-3 text-sm text-gray-900 font-semibold rounded-r-sm w-32 text-right font-mono flex items-center justify-end">
-                        {operadoresSelecionados.length}
-                      </div>
-                    </div>
+                    )}
                   </>
                 )}
 
@@ -965,7 +1718,7 @@ export default function Home() {
                   <>
                     <div className="flex items-stretch">
                       <div className="bg-gray-100 border border-gray-200 px-4 py-3 flex items-center rounded-l-sm flex-1">
-                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Objetivo (peças/dia)</span>
+                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Objetivo (pecas/dia)</span>
                       </div>
                       <input
                         type="number" min={1}
@@ -997,7 +1750,7 @@ export default function Home() {
                   <>
                     <div className="flex items-stretch">
                       <div className="bg-gray-100 border border-gray-200 px-4 py-3 flex items-center rounded-l-sm flex-1">
-                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Nº de Operadores</span>
+                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Numero de Operadores</span>
                       </div>
                       <input
                         type="number" min={1} max={operadores.length}
@@ -1016,7 +1769,7 @@ export default function Home() {
                     </div>
                     <div className="flex items-stretch">
                       <div className="bg-gray-100 border border-gray-200 px-4 py-3 flex items-center rounded-l-sm flex-1">
-                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Disponíveis na Linha</span>
+                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Disponiveis na Linha</span>
                       </div>
                       <div className="bg-gray-50 border border-gray-300 px-4 py-3 text-sm text-gray-900 font-semibold rounded-r-sm w-32 text-right font-mono flex items-center justify-end">
                         {operadores.length}
@@ -1041,7 +1794,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Gama Operatória */}
+      {/* Gama Operatoria */}
       {config.possibilidade !== 4 && (
         <div className="bg-white rounded-sm border border-gray-200 shadow-sm">
           <div
@@ -1055,16 +1808,16 @@ export default function Home() {
                 </div>
                 <div>
                   <h3 className="text-base font-semibold text-gray-900">
-                    Gama Operatória — {produto?.nome || "Sem produto"}
+                    Gama Operatoria - {produto?.nome || "Sem produto"}
                   </h3>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Operações carregadas da ficha técnica do produto selecionado
+                    Operacoes carregadas da ficha tecnica do produto selecionado
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-xs text-gray-500 font-mono">
-                  {operacoes.length} ops · {tempoTotal.toFixed(2)} min
+                  {operacoes.length} ops  -  {tempoTotal.toFixed(2)} min
                 </span>
                 <ChevronDown
                   className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${gamaExpandida ? "rotate-180" : ""}`}
@@ -1080,10 +1833,10 @@ export default function Home() {
                   <tr className="bg-gray-50 border-b border-gray-200">
                     <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase w-16">Seq.</th>
                     <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase w-20">ID</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">Descrição</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">Descricao</th>
                     <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase w-28">Tempo (min)</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">Máquina</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[200px]">Operadores Disponíveis</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">Maquina</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[200px]">Operadores Disponiveis</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1104,12 +1857,12 @@ export default function Home() {
                           {operacao.nome}
                           {operacao.critica && (
                             <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-sm text-xs font-medium bg-orange-200 text-orange-800 border border-orange-300">
-                              CRÍTICA
+                              CRITICA
                             </span>
                           )}
                         </td>
                         <td className="p-3 font-mono text-sm text-gray-700">{operacao.tempo.toFixed(2)}</td>
-                        <td className="p-3 text-sm text-gray-600">{operacao.tipoMaquina || "—"}</td>
+                        <td className="p-3 text-sm text-gray-600">{operacao.tipoMaquina || "-"}</td>
                         <td className="p-3">
                           <OperadorSelector
                             operadores={operadoresSelecionados.map((opId) => {
@@ -1142,16 +1895,20 @@ export default function Home() {
         </div>
       )}
 
-      {/* Configuração de Layout */}
-      <LayoutConfigurador operacoes={operacoes} onLayoutChange={setLayoutConfig} />
+      {/* Configuracao de Layout */}
+      <LayoutConfigurador
+        operacoes={operacoes}
+        onLayoutChange={setLayoutConfig}
+        agruparPorMaquina={config.agruparMaquinas}
+      />
 
-      {/* Botão Calcular */}
+      {/* BotÃ£o Calcular */}
       <div className="flex justify-center pt-4">
         <Button
           type="button"
           size="lg"
           onClick={handleCalcular}
-          disabled={operadoresSelecionados.length === 0 || operacoes.length === 0}
+          disabled={(!usarAllocateModo1Api && operadoresSelecionados.length === 0) || operacoes.length === 0}
           className="px-12 py-6 text-sm font-semibold bg-blue-500 hover:bg-blue-600 rounded-sm uppercase tracking-wide"
         >
           <Calculator className="w-5 h-5 mr-2" />
@@ -1161,3 +1918,5 @@ export default function Home() {
     </main>
   );
 }
+
+

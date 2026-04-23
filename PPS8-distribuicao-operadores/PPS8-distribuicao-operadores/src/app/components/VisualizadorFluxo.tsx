@@ -35,7 +35,7 @@ export function VisualizadorFluxo({
 }: VisualizadorFluxoProps) {
   const [estacoesConfiguradas, setEstacoesConfiguradas] = useState<{[key: string]: string}>({});
 
-  const tipoLayout = layoutConfig?.tipoLayout || "espinha";
+  const tipoLayout = layoutConfig?.tipoLayout || "linha";
   const postosPorLado = layoutConfig?.postosPorLado || 8;
   const permitirCruzamento = layoutConfig?.permitirCruzamento ?? true;
 

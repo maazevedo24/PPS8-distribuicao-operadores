@@ -1,4 +1,4 @@
-import { ResultadosBalanceamento, DistribuicaoCarga } from "../types";
+﻿import { ResultadosBalanceamento, DistribuicaoCarga } from "../types";
 import { useState, useCallback, useMemo } from "react";
 import { Undo2, RotateCcw, Lock, LockOpen, CheckCheck } from "lucide-react";
 
@@ -27,7 +27,24 @@ const L_OCUP = W_GRP + W_SEQ + W_MAQ + W_NOM;
 const ROW_H  = 26;
 const HDR_H  = 32;
 
-// Estilo base de célula do cabeçalho
+const normalizeKey = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const getShortOperatorCode = (raw: string): string => {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  const inParens = text.match(/\(([^)]+)\)/)?.[1]?.trim();
+  if (inParens) return inParens;
+  const codeToken = text.match(/\b[A-Za-z]{1,}\d+\b/)?.[0];
+  if (codeToken) return codeToken;
+  return text;
+};
+
+// Estilo base de cÃ©lula do cabeÃ§alho
 const thStyle = (left?: number, extra?: React.CSSProperties): React.CSSProperties => ({
   position: left !== undefined ? "sticky" : undefined,
   left,
@@ -44,7 +61,7 @@ const thStyle = (left?: number, extra?: React.CSSProperties): React.CSSPropertie
   ...extra,
 });
 
-// Estilo base de célula do corpo
+// Estilo base de cÃ©lula do corpo
 const tdBase = (bg: string, left?: number): React.CSSProperties => ({
   position: left !== undefined ? "sticky" : undefined,
   left,
@@ -115,6 +132,12 @@ export function TabelaDistribuicao({
       m[op.id] = {};
       opIds.forEach((oid) => {
         const d = resultados.distribuicao.find((d) => d.operadorId === oid);
+        const tempoDiretoMin = d?.temposOperacoes?.[op.id];
+        if (typeof tempoDiretoMin === "number" && Number.isFinite(tempoDiretoMin) && tempoDiretoMin > 0) {
+          m[op.id][oid] = String(toDisplayTempo(tempoDiretoMin));
+          return;
+        }
+
         if (!d?.operacoes.includes(op.id)) {
           m[op.id][oid] = "";
           return;
@@ -203,21 +226,55 @@ export function TabelaDistribuicao({
     return t;
   }, [cells, opIds, opsOrdenadas]);
 
-  const totalOcup   = opsOrdenadas.reduce((s: number, op: any) => s + op.tempo, 0);
-  const totalOcupDisplay = toDisplayTempo(totalOcup);
+  const totalOcup = opsOrdenadas.reduce((s: number, op: any) => s + op.tempo, 0);
+  const totalOcupDisplay =
+    typeof resultados.ocupacaoTotal === "number" && Number.isFinite(resultados.ocupacaoTotal)
+      ? (unidadeTempo === "s" ? resultados.ocupacaoTotal : resultados.ocupacaoTotal / 60)
+      : toDisplayTempo(totalOcup);
   const balancedCnt = opsOrdenadas.filter(rowOk).length;
-  const fmtId       = (id: string) => id.replace(/^OP0*/, "OP ");
+
+  const resolveDisplayOperatorCode = (id: string): string => {
+    const idKey = normalizeKey(id);
+    const idDigits = (id.match(/\d+/g) || []).join("");
+    const byId = operadores.find((op: any) => normalizeKey(String(op?.id || "")) === idKey);
+    if (byId?.id) return String(byId.id);
+
+    const byNome = operadores.find((op: any) => normalizeKey(String(op?.nome || "")) === idKey);
+    if (byNome?.id) return String(byNome.id);
+
+    const byNomeParcial = operadores.find((op: any) => {
+      const nomeKey = normalizeKey(String(op?.nome || ""));
+      if (!nomeKey) return false;
+      return nomeKey.includes(idKey) || idKey.includes(nomeKey);
+    });
+    if (byNomeParcial?.id) return String(byNomeParcial.id);
+
+    const shortFromRaw = getShortOperatorCode(id);
+    const shortKey = normalizeKey(shortFromRaw);
+    const byShort = operadores.find((op: any) => normalizeKey(String(op?.id || "")) === shortKey);
+    if (byShort?.id) return String(byShort.id);
+
+    if (idDigits) {
+      const byDigits = operadores.find((op: any) => {
+        const opDigits = (String(op?.id || "").match(/\d+/g) || []).join("");
+        return Boolean(opDigits) && (opDigits === idDigits || opDigits.endsWith(idDigits) || idDigits.endsWith(opDigits));
+      });
+      if (byDigits?.id) return String(byDigits.id);
+    }
+
+    return shortFromRaw || id;
+  };
 
   return (
     <div className="flex flex-col gap-3">
 
-      {/* ── Toolbar ── */}
+      {/* â”€â”€ Toolbar â”€â”€ */}
       <div className="flex items-center justify-between gap-4">
-        {/* Métricas */}
+        {/* MÃ©tricas */}
         <div className="flex items-center gap-5">
           {[
             { label: "Operadores",  value: String(resultados.numeroOperadores) },
-            { label: "Operações",   value: String(opsOrdenadas.length) },
+            { label: "Operacoes",   value: String(opsOrdenadas.length) },
             { label: "Balanceadas", value: `${balancedCnt} / ${opsOrdenadas.length}` },
             { label: "OCUP total",  value: `${formatTempo(totalOcupDisplay)} ${unidadeTempoLabel}` },
             { label: "Takt",        value: `${formatTempo(toDisplayTempo(resultados.taktTime))} ${unidadeTempoLabel}` },
@@ -230,7 +287,7 @@ export function TabelaDistribuicao({
           ))}
         </div>
 
-        {/* Acções */}
+        {/* AcÃ§Ãµes */}
         <div className="flex items-center gap-2 shrink-0">
           {hist.length > 0 && (
             <>
@@ -248,17 +305,17 @@ export function TabelaDistribuicao({
         </div>
       </div>
 
-      {/* ── Tabela ── */}
+      {/* â”€â”€ Tabela â”€â”€ */}
       <div
-        className="border border-gray-200 rounded-sm overflow-auto bg-white"
-        style={{ maxHeight: "calc(100vh - 290px)" }}
+        className="border border-gray-200 rounded-sm overflow-x-auto overflow-y-auto bg-white"
+        style={{ maxHeight: "calc(100vh - 290px)", width: "100%" }}
       >
         <table
           style={{
-            width: "100%",
+            width: "max-content",
             tableLayout: "fixed",
             borderCollapse: "collapse",
-            minWidth: FIXED + opIds.length * 76,
+            minWidth: `max(100%, ${FIXED + opIds.length * 76}px)`,
           }}
         >
           <colgroup>
@@ -267,26 +324,28 @@ export function TabelaDistribuicao({
             <col style={{ width: W_MAQ }} />
             <col style={{ width: W_NOM }} />
             <col style={{ width: W_OCUP }} />
-            {opIds.map((id) => <col key={id} />)}
+            {opIds.map((id) => <col key={id} style={{ width: 76 }} />)}
           </colgroup>
 
-          {/* ── Cabeçalho ── */}
+          {/* â”€â”€ CabeÃ§alho â”€â”€ */}
           <thead style={{ position: "sticky", top: 0, zIndex: 30 }}>
             <tr style={{ height: HDR_H }}>
-              {/* Nº */}
+              {/* Grupo */}
               <th style={thStyle(0, { textAlign: "center", paddingLeft: 0, fontSize: 10, color: "#9ca3af" })}>Grupo</th>
               {/* SEQ */}
               <th style={thStyle(L_SEQ, { textAlign: "center", paddingLeft: 0 })}>SEQ</th>
-              {/* MÁQUINA */}
-              <th style={thStyle(L_MAQ)}>Máquina</th>
-              {/* OPERAÇÃO */}
-              <th style={thStyle(L_NOM)}>Operação</th>
+              {/* Maquina */}
+              <th style={thStyle(L_MAQ)}>Maquina</th>
+              {/* Operacao */}
+              <th style={thStyle(L_NOM)}>Operacao</th>
               {/* OCUP */}
               <th style={thStyle(L_OCUP, { textAlign: "center", paddingLeft: 0, color: "#2563eb", borderRight: "2px solid #e5e7eb" })}>
                 OCUP ({unidadeTempoLabel})
               </th>
               {/* Operadores */}
-              {opIds.map((oid) => (
+              {opIds.map((oid) => {
+                const displayCode = resolveDisplayOperatorCode(oid);
+                return (
                 <th
                   key={oid}
                   style={{
@@ -300,9 +359,12 @@ export function TabelaDistribuicao({
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {fmtId(oid)}
+                  <span title={displayCode} className="cursor-help inline-block max-w-[72px] truncate align-middle">
+                    {displayCode}
+                  </span>
                 </th>
-              ))}
+                );
+              })}
             </tr>
 
             {/* Subtotais */}
@@ -311,7 +373,7 @@ export function TabelaDistribuicao({
               <td style={{ position: "sticky", left: L_SEQ, zIndex: 11, background: "#f9fafb", borderBottom: "1px solid #e5e7eb", borderRight: "1px solid #f3f4f6" }} />
               <td style={{ position: "sticky", left: L_MAQ, zIndex: 11, background: "#f9fafb", borderBottom: "1px solid #e5e7eb", borderRight: "1px solid #f3f4f6" }} />
               <td style={{ position: "sticky", left: L_NOM, zIndex: 11, background: "#f9fafb", color: "#9ca3af", fontSize: 10, textAlign: "right", paddingRight: 10, borderBottom: "1px solid #e5e7eb", borderRight: "1px solid #f3f4f6" }}>
-                subtotal →
+                subtotal {"->"}
               </td>
               <td style={{ position: "sticky", left: L_OCUP, zIndex: 11, background: "#eff6ff", color: "#2563eb", fontSize: 11, fontWeight: 700, fontFamily: "monospace", textAlign: "center", borderBottom: "1px solid #e5e7eb", borderRight: "2px solid #e5e7eb" }}>
                 {formatTempo(totalOcupDisplay)}
@@ -332,14 +394,14 @@ export function TabelaDistribuicao({
                       borderRight: "1px solid #f3f4f6",
                     }}
                   >
-                    {t > 0 ? formatTempo(t) : "—"}
+                    {t > 0 ? formatTempo(t) : "-"}
                   </td>
                 );
               })}
             </tr>
           </thead>
 
-          {/* ── Corpo ── */}
+          {/* â”€â”€ Corpo â”€â”€ */}
           <tbody>
             {opsOrdenadas.map((op: any, ri: number) => {
               const letra    = grupoMap[op.tipoMaquina || "Geral"] || "?";
@@ -368,17 +430,17 @@ export function TabelaDistribuicao({
                     {op.sequencia}
                   </td>
 
-                  {/* MÁQUINA */}
+                  {/* Maquina */}
                   <td style={{ ...tdBase(rowBg, L_MAQ), color: "#6b7280" }} title={op.tipoMaquina}>
                     {op.tipoMaquina}
                   </td>
 
-                  {/* OPERAÇÃO */}
+                  {/* Operacao */}
                   <td style={{ ...tdBase(rowBg, L_NOM), fontWeight: isActive ? 600 : 400 }} title={op.nome}>
                     {op.nome}
                   </td>
 
-                  {/* OCUP — mostra ✓ + botão de desbloqueio quando balanceado */}
+                  {/* OCUP - mostra check + botao de desbloqueio quando balanceado */}
                   <td
                     style={{
                       ...tdBase(ok ? "#f0fdf4" : "#eff6ff", L_OCUP),
@@ -390,41 +452,49 @@ export function TabelaDistribuicao({
                       padding: 0,
                     }}
                   >
-                    {ok ? (
-                      <button
-                        title={locked ? "Concluído — clique para editar" : "Bloquear linha"}
-                        onClick={(e) => { e.stopPropagation(); toggleLock(op.id); }}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: 4,
-                          width: "100%",
-                          height: ROW_H,
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                          color: "#16a34a",
-                          fontSize: 11,
-                          fontFamily: "monospace",
-                          fontWeight: 700,
-                        }}
-                      >
-                        <CheckCheck style={{ width: 11, height: 11, strokeWidth: 2.5 }} />
-                        {formatTempo(toDisplayTempo(op.tempo))}
-                        {locked
-                          ? <Lock style={{ width: 9, height: 9, opacity: 0.6 }} />
-                          : <LockOpen style={{ width: 9, height: 9, opacity: 0.4 }} />
-                        }
-                      </button>
-                    ) : (
-                      <span style={{ display: "block", lineHeight: `${ROW_H}px` }}>
-                        {formatTempo(toDisplayTempo(op.tempo))}
-                      </span>
-                    )}
+                    {(() => {
+                      // Soma dos tempos de todos os colaboradores nesta linha
+                      const rowSum = opIds.reduce((s, oid) => {
+                        const v = parseFloat(cells[op.id]?.[oid] || "");
+                        return s + (isNaN(v) ? 0 : v);
+                      }, 0);
+                      const rowSumInternal = toInternalTempo(rowSum);
+                      return ok ? (
+                        <button
+                          title={locked ? "Concluido - clique para editar" : "Bloquear linha"}
+                          onClick={(e) => { e.stopPropagation(); toggleLock(op.id); }}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 4,
+                            width: "100%",
+                            height: ROW_H,
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                            color: "#16a34a",
+                            fontSize: 11,
+                            fontFamily: "monospace",
+                            fontWeight: 700,
+                          }}
+                        >
+                          <CheckCheck style={{ width: 11, height: 11, strokeWidth: 2.5 }} />
+                          {formatTempo(rowSum)}
+                          {locked
+                            ? <Lock style={{ width: 9, height: 9, opacity: 0.6 }} />
+                            : <LockOpen style={{ width: 9, height: 9, opacity: 0.4 }} />
+                          }
+                        </button>
+                      ) : (
+                        <span style={{ display: "block", lineHeight: `${ROW_H}px` }}>
+                          {formatTempo(rowSum)}
+                        </span>
+                      );
+                    })()}
                   </td>
 
-                  {/* Células editáveis */}
+                  {/* CÃ©lulas editÃ¡veis */}
                   {opIds.map((oid) => {
                     const val    = cells[op.id]?.[oid] ?? "";
                     const hasVal = val !== "" && parseFloat(val) > 0;
@@ -490,7 +560,7 @@ export function TabelaDistribuicao({
                               userSelect: "none",
                             }}
                           >
-                            {hasVal ? formatTempo(parseFloat(val)) : "·"}
+                            {hasVal ? formatTempo(parseFloat(val)) : "."}
                           </span>
                         )}
                       </td>
@@ -501,10 +571,10 @@ export function TabelaDistribuicao({
             })}
           </tbody>
 
-          {/* ── Rodapé ── */}
+          {/* â”€â”€ RodapÃ© â”€â”€ */}
           <tfoot style={{ position: "sticky", bottom: 0, zIndex: 20 }}>
             <tr style={{ height: 30, background: "#f9fafb", borderTop: "2px solid #e5e7eb" }}>
-              <td style={{ position: "sticky", left: 0, zIndex: 21, background: "#f9fafb", borderRight: "1px solid #e5e7eb", textAlign: "center", color: "#9ca3af", fontSize: 10, fontWeight: 700 }}>Σ</td>
+              <td style={{ position: "sticky", left: 0, zIndex: 21, background: "#f9fafb", borderRight: "1px solid #e5e7eb", textAlign: "center", color: "#9ca3af", fontSize: 10, fontWeight: 700 }}>S</td>
               <td style={{ position: "sticky", left: L_SEQ, zIndex: 21, background: "#f9fafb", borderRight: "1px solid #e5e7eb" }} />
               <td style={{ position: "sticky", left: L_MAQ, zIndex: 21, background: "#f9fafb", borderRight: "1px solid #e5e7eb", color: "#6b7280", fontSize: 10, fontWeight: 600, paddingLeft: 10 }}>Total</td>
               <td style={{ position: "sticky", left: L_NOM, zIndex: 21, background: "#f9fafb", borderRight: "1px solid #e5e7eb" }} />
@@ -526,7 +596,7 @@ export function TabelaDistribuicao({
                       borderRight: "1px solid #e5e7eb",
                     }}
                   >
-                    {t > 0 ? formatTempo(t) : "—"}
+                    {t > 0 ? formatTempo(t) : "-"}
                   </td>
                 );
               })}
@@ -535,7 +605,7 @@ export function TabelaDistribuicao({
         </table>
       </div>
 
-      {/* ── Rodapé info ── */}
+      {/* â”€â”€ RodapÃ© info â”€â”€ */}
       <div className="flex items-center justify-between gap-4">
         {/* Legenda grupos */}
         <div className="flex items-center gap-4 flex-wrap">
@@ -550,11 +620,12 @@ export function TabelaDistribuicao({
         </div>
         {/* Dica */}
         <span className="text-[10px] text-gray-400 shrink-0">
-          Clique para seleccionar linha · Clique numa célula para editar ·{" "}
-          <kbd className="px-1 border border-gray-200 rounded-sm text-[9px] bg-white text-gray-500">Tab</kbd> avança ·{" "}
+          Clique para selecionar linha - Clique numa celula para editar -{" "}
+          <kbd className="px-1 border border-gray-200 rounded-sm text-[9px] bg-white text-gray-500">Tab</kbd> avanca -{" "}
           verde = balanceado
         </span>
       </div>
     </div>
   );
 }
+

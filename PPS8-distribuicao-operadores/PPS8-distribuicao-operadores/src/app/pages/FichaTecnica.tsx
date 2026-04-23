@@ -1105,11 +1105,80 @@ export default function FichaTecnica() {
     setTimeout(() => setMensagemGuardado(null), 3000);
   };
 
-  const handleAtribuirManualmente = (operacaoId: string, operadorIds: string[]) => {
+  const handleAtribuirManualmente = async (operacaoId: string, operadorIds: string[]) => {
+    const produtoAtualId = produtoSelecionadoRef.current;
+    const produtoAtual = produtosRef.current.find((item) => item.id === produtoAtualId);
+    if (!produtoAtual) return;
+
+    const operadoresCanonicalizados = canonicalizeOperatorIds(operadorIds, operadores);
+
     setAtribuicoesManual((prev) => ({
       ...prev,
-      [operacaoId]: operadorIds,
+      [operacaoId]: operadoresCanonicalizados,
     }));
+
+    if (operadoresCanonicalizados.length === 0) return;
+
+    const operacaoAtual =
+      produtoAtual.operacoes.find((item) => item.id === operacaoId) ||
+      produtoAtual.operacoes.find((item) => String(item.sequencia) === operacaoId) ||
+      null;
+
+    const operationCodeCandidates = Array.from(
+      new Set(
+        [operacaoAtual?.id, operacaoId, operacaoAtual ? String(operacaoAtual.sequencia) : ""]
+          .map((value) => value?.trim())
+          .filter(Boolean)
+      )
+    ) as string[];
+    const taskIds = Array.from(
+      new Set([produtoAtual.id, produtoAtual.referencia].map((value) => value?.trim()).filter(Boolean))
+    ) as string[];
+
+    if (taskIds.length === 0 || operationCodeCandidates.length === 0) {
+      throw new Error("Sem task_id ou op_code valido para guardar atribuicao forcada.");
+    }
+
+    try {
+      for (const operadorId of operadoresCanonicalizados) {
+        let atribuicaoGuardada = false;
+        let ultimaFalha: unknown = null;
+
+        for (const taskId of taskIds) {
+          for (const operationCode of operationCodeCandidates) {
+            try {
+              await axios.patch(
+                `${API_BASE_URL}/technical-sheets/${encodeURIComponent(taskId)}/forced-allocations`,
+                {
+                  op_code: operationCode,
+                  collaborator_id: operadorId,
+                }
+              );
+              atribuicaoGuardada = true;
+              break;
+            } catch (error) {
+              ultimaFalha = error;
+            }
+          }
+          if (atribuicaoGuardada) break;
+        }
+
+        if (!atribuicaoGuardada) {
+          throw ultimaFalha || new Error("Falha ao guardar atribuicao forcada.");
+        }
+      }
+
+      const produtoAtualizado =
+        produtosRef.current.find((item) => item.id === produtoAtual.id) || produtoAtual;
+      await handleCarregarAtribuicoesForcadas(produtoAtualizado);
+    } catch (error) {
+      console.error("Erro ao guardar atribuicoes forçadas:", error);
+      setErroApi("Nao foi possivel guardar atribuicoes forçadas na API.");
+      const produtoAtualizado =
+        produtosRef.current.find((item) => item.id === produtoAtual.id) || produtoAtual;
+      await handleCarregarAtribuicoesForcadas(produtoAtualizado);
+      throw error;
+    }
   };
 
   const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1821,6 +1890,7 @@ export default function FichaTecnica() {
           operacoes={produto.operacoes}
           atribuicoesManual={atribuicoesManual}
           onAtribuirManualmente={handleAtribuirManualmente}
+          familyId={grupoArtigoSelecionado}
         />
       )}
 
