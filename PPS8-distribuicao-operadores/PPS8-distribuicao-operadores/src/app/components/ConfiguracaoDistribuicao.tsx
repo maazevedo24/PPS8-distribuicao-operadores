@@ -1,4 +1,5 @@
-﻿import { ConfiguracaoDistribuicao } from "../types";
+import { useEffect, useState } from "react";
+import { ConfiguracaoDistribuicao } from "../types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
@@ -21,6 +22,38 @@ export function ConfiguracaoDistribuicaoComponent({
   operacoes,
   onCalcularOperadoresNecessarios,
 }: ConfiguracaoDistribuicaoProps) {
+  const [naoDividirMaiorInput, setNaoDividirMaiorInput] = useState(String(config.naoDividirMaiorQue));
+  const [naoDividirMenorInput, setNaoDividirMenorInput] = useState(String(config.naoDividirMenorQue));
+
+  useEffect(() => {
+    setNaoDividirMaiorInput(String(config.naoDividirMaiorQue));
+  }, [config.naoDividirMaiorQue]);
+
+  useEffect(() => {
+    setNaoDividirMenorInput(String(config.naoDividirMenorQue));
+  }, [config.naoDividirMenorQue]);
+
+  const parseDecimalInput = (raw: string): number | null => {
+    const normalized = raw.trim().replace(",", ".");
+    if (!normalized) return null;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const commitNaoDividirMaior = () => {
+    const parsed = parseDecimalInput(naoDividirMaiorInput);
+    const next = parsed == null ? config.naoDividirMaiorQue : Math.max(1.01, Math.min(10, parsed));
+    onChange({ ...config, naoDividirMaiorQue: next });
+    setNaoDividirMaiorInput(String(next));
+  };
+
+  const commitNaoDividirMenor = () => {
+    const parsed = parseDecimalInput(naoDividirMenorInput);
+    const next = parsed == null ? config.naoDividirMenorQue : Math.min(0.99, Math.max(0, parsed));
+    onChange({ ...config, naoDividirMenorQue: next });
+    setNaoDividirMenorInput(String(next));
+  };
+
   return (
     <Card className="shadow-sm border border-gray-200 rounded-sm bg-white">
       <CardHeader className="border-b border-gray-200">
@@ -99,84 +132,88 @@ export function ConfiguracaoDistribuicaoComponent({
         </div>
 
         {config.possibilidade !== 4 && (
-        <div className="space-y-4 pt-4 border-t border-gray-200">
-          <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
-            Parametros Adicionais
-          </Label>
+          <div className="space-y-4 pt-4 border-t border-gray-200">
+            <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+              Parametros Adicionais
+            </Label>
 
-          <div className="flex items-center justify-between p-4 border border-gray-200 rounded-sm">
-            <div className="flex-1">
-              <Label htmlFor="agrupar" className="font-medium text-gray-900 text-sm">
-                Agrupar por Tipo de Maquina
-              </Label>
-              <p className="text-xs text-gray-500 mt-1">
-                Reduz deslocamentos agrupando operacoes similares
-              </p>
+            <div className="flex items-center justify-between p-4 border border-gray-200 rounded-sm">
+              <div className="flex-1">
+                <Label htmlFor="agrupar" className="font-medium text-gray-900 text-sm">
+                  Agrupar por Tipo de Maquina
+                </Label>
+                <p className="text-xs text-gray-500 mt-1">
+                  Reduz deslocamentos agrupando operacoes similares
+                </p>
+              </div>
+              <Switch
+                id="agrupar"
+                checked={config.agruparMaquinas}
+                onCheckedChange={(checked) => onChange({ ...config, agruparMaquinas: checked })}
+              />
             </div>
-            <Switch
-              id="agrupar"
-              checked={config.agruparMaquinas}
-              onCheckedChange={(checked) => onChange({ ...config, agruparMaquinas: checked })}
-            />
-          </div>
 
-          {/* Campos numericos de configuracao */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 border border-gray-200 rounded-sm">
-            <div className="space-y-2">
-              <Label className="text-xs font-medium text-gray-700">
-                Carga Maxima por Operador
-              </Label>
-              <Input
-                type="number"
-                min={50}
-                max={100}
-                step={1}
-                value={config.cargaMaximaOperador}
-                onChange={(e) =>
-                  onChange({ ...config, cargaMaximaOperador: Number(e.target.value) })
-                }
-                className="rounded-sm text-sm font-mono"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs font-medium text-gray-700">Nao Dividir Operacoes Maiores Que </Label>
-              <Input
-                type="number"
-                min={1.01}
-                max={10}
-                step={0.01}
-                value={config.naoDividirMaiorQue}
-                onChange={(e) =>
-                  onChange({
-                    ...config,
-                    naoDividirMaiorQue: Math.max(1.01, Number(e.target.value) || 1.1),
-                  })
-                }
-                className="rounded-sm text-sm font-mono"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs font-medium text-gray-700">Nao Dividir Operacoes Menores Que </Label>
-              <Input
-                type="number"
-                min={0}
-                max={0.99}
-                step={0.01}
-                value={config.naoDividirMenorQue}
-                onChange={(e) =>
-                  onChange({
-                    ...config,
-                    naoDividirMenorQue: Math.min(0.99, Math.max(0, Number(e.target.value) || 0.9)),
-                  })
-                }
-                className="rounded-sm text-sm font-mono"
-              />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 border border-gray-200 rounded-sm">
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-gray-700">
+                  Carga Maxima por Operador
+                </Label>
+                <Input
+                  type="number"
+                  min={50}
+                  max={100}
+                  step={1}
+                  value={config.cargaMaximaOperador}
+                  onChange={(e) =>
+                    onChange({ ...config, cargaMaximaOperador: Number(e.target.value) })
+                  }
+                  className="rounded-sm text-sm font-mono"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-gray-700">Nao Dividir Operacoes Maiores Que </Label>
+                <Input
+                  type="number"
+                  min={1.01}
+                  max={10}
+                  step={0.1}
+                  value={naoDividirMaiorInput}
+                  onChange={(e) => setNaoDividirMaiorInput(e.target.value)}
+                  onBlur={commitNaoDividirMaior}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitNaoDividirMaior();
+                    }
+                  }}
+                  className="rounded-sm text-sm font-mono"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-gray-700">Nao Dividir Operacoes Menores Que </Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={0.99}
+                  step={0.1}
+                  value={naoDividirMenorInput}
+                  onChange={(e) => setNaoDividirMenorInput(e.target.value)}
+                  onBlur={commitNaoDividirMenor}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitNaoDividirMenor();
+                    }
+                  }}
+                  className="rounded-sm text-sm font-mono"
+                />
+              </div>
             </div>
           </div>
-        </div>
         )}
       </CardContent>
     </Card>
   );
 }
-

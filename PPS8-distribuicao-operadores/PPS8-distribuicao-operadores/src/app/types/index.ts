@@ -106,8 +106,34 @@ export interface DistribuicaoCarga {
   temposOperacoes?: Record<string, number>;
 }
 
+export interface OperationAllocationOperatorPosition {
+  time_seconds?: number;
+  operator_name?: string;
+  position_number?: number;
+  position_label?: string;
+  position_side?: string;
+}
+
+export interface OperationAllocation {
+  seq?: number;
+  operation_id?: string;
+  operation_code?: string;
+  operation_name?: string;
+  machine_type?: string;
+  total_time_seconds?: number;
+  allocated_time_seconds?: number;
+  remaining_time_seconds?: number;
+  split_count?: number;
+  is_split?: boolean;
+  balance_loss?: boolean;
+  operator_allocations?: any[];
+  operator_times?: Record<string, number>;
+  operator_positions?: Record<string, OperationAllocationOperatorPosition>;
+}
+
 export interface ResultadosBalanceamento {
   distribuicao: DistribuicaoCarga[];
+  operation_allocations?: OperationAllocation[];
   numeroCiclosPorHora: number;
   taktTime: number; // minutos
   tempoCiclo: number; // minutos

@@ -223,7 +223,7 @@ const normalizeNumericToken = (value: string): string => {
   return Number.isFinite(parsed) ? String(parsed) : "";
 };
 
-const parseForcedOperatorIds = (value: unknown): string[] => {
+const parseAssignedOperatorIds = (value: unknown): string[] => {
   const asArray = (input: unknown[]): string[] =>
     input
       .map((entry) => (typeof entry === "string" || typeof entry === "number" ? String(entry).trim() : ""))
@@ -257,9 +257,13 @@ const parseForcedOperatorIds = (value: unknown): string[] => {
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
     const nestedCandidates = [
+      record.collaborator_ids,
+      record.collaborators,
+      record.colaboradores,
       record.operator_ids,
       record.operators,
       record.operadores,
+      record.collaborator_id,
       record.operator_id,
       record.operator,
       record.operador,
@@ -267,7 +271,7 @@ const parseForcedOperatorIds = (value: unknown): string[] => {
       record.code,
     ];
     for (const candidate of nestedCandidates) {
-      const parsed = parseForcedOperatorIds(candidate);
+      const parsed = parseAssignedOperatorIds(candidate);
       if (parsed.length > 0) return parsed;
     }
   }
@@ -275,10 +279,10 @@ const parseForcedOperatorIds = (value: unknown): string[] => {
   return [];
 };
 
-const resolveForcedOperationId = (forcedKey: string, operacoes: Operacao[]): string | null => {
-  const keyToken = normalizeToken(forcedKey);
-  const keyNumeric = normalizeNumericToken(forcedKey);
-  const keyAsNumber = Number(forcedKey);
+const resolveOperationIdFromKey = (operationKey: string, operacoes: Operacao[]): string | null => {
+  const keyToken = normalizeToken(operationKey);
+  const keyNumeric = normalizeNumericToken(operationKey);
+  const keyAsNumber = Number(operationKey);
 
   const byId = operacoes.find((operacao) => normalizeToken(operacao.id) === keyToken);
   if (byId) return byId.id;
@@ -298,17 +302,17 @@ const resolveForcedOperationId = (forcedKey: string, operacoes: Operacao[]): str
   return null;
 };
 
-const mapForcedAllocationsToManual = (
-  forcedAllocations: Record<string, unknown>,
+const mapOperationCandidatesToManual = (
+  operationCandidates: Record<string, unknown>,
   operacoes: Operacao[]
 ): { [operacaoId: string]: string[] } => {
   const mapped: { [operacaoId: string]: string[] } = {};
 
-  Object.entries(forcedAllocations).forEach(([forcedKey, forcedValue]) => {
-    const operacaoId = resolveForcedOperationId(forcedKey, operacoes);
+  Object.entries(operationCandidates).forEach(([operationKey, operationValue]) => {
+    const operacaoId = resolveOperationIdFromKey(operationKey, operacoes);
     if (!operacaoId) return;
 
-    const operadoresIds = Array.from(new Set(parseForcedOperatorIds(forcedValue)));
+    const operadoresIds = Array.from(new Set(parseAssignedOperatorIds(operationValue)));
     if (operadoresIds.length === 0) return;
     mapped[operacaoId] = operadoresIds;
   });
@@ -461,6 +465,7 @@ export default function FichaTecnica() {
         });
 
         if (proximoSelecionado) {
+          produtoSelecionadoRef.current = proximoSelecionado;
           void handleCarregarFichaPorCodigo(proximoSelecionado, fichas);
         }
       } catch (error) {
@@ -478,23 +483,24 @@ export default function FichaTecnica() {
     carregarFichasDaFamilia();
   }, [grupoArtigoSelecionado]);
 
-  const handleCarregarAtribuicoesForcadas = async (produtoAlvo: Produto) => {
+  const handleCarregarCandidatePools = async (produtoAlvo: Produto) => {
     const taskIds = Array.from(
       new Set([produtoAlvo.id, produtoAlvo.referencia].map((value) => value?.trim()).filter(Boolean))
     ) as string[];
 
     if (taskIds.length === 0) {
-      if (produtoSelecionadoRef.current === produtoAlvo.id) {
+      const selecionadoAtual = produtoSelecionadoRef.current;
+      if (!selecionadoAtual || selecionadoAtual === produtoAlvo.id) {
         setAtribuicoesManual({});
       }
       return;
     }
 
-    let forcedAllocations: Record<string, unknown> | null = null;
+    let candidatePools: Record<string, unknown> | null = null;
     for (const taskId of taskIds) {
       try {
         const resposta = await axios.get(
-          `${API_BASE_URL}/technical-sheets/${encodeURIComponent(taskId)}/forced-allocations`
+          `${API_BASE_URL}/technical-sheets/${encodeURIComponent(taskId)}/candidate-pools`
         );
         const responseData = resposta.data;
         if (!responseData || typeof responseData !== "object" || Array.isArray(responseData)) {
@@ -503,13 +509,18 @@ export default function FichaTecnica() {
 
         const responseRecord = responseData as Record<string, unknown>;
         const candidate =
-          responseRecord.forced_allocations ??
-          responseRecord.forcedAllocations ??
-          responseRecord.allocations ??
+          responseRecord.candidate_pools ??
+          responseRecord.candidatePools ??
+          responseRecord.pools ??
+          (Object.keys(responseRecord).some((key) => key !== "task_id")
+            ? Object.fromEntries(
+                Object.entries(responseRecord).filter(([key, value]) => key !== "task_id" && value != null)
+              )
+            : null) ??
           null;
 
         if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
-          forcedAllocations = candidate as Record<string, unknown>;
+          candidatePools = candidate as Record<string, unknown>;
           break;
         }
       } catch {
@@ -517,14 +528,15 @@ export default function FichaTecnica() {
       }
     }
 
-    if (produtoSelecionadoRef.current !== produtoAlvo.id) return;
+    const selecionadoAtual = produtoSelecionadoRef.current;
+    if (selecionadoAtual && selecionadoAtual !== produtoAlvo.id) return;
 
-    if (!forcedAllocations) {
+    if (!candidatePools) {
       setAtribuicoesManual({});
       return;
     }
 
-    const mapped = mapForcedAllocationsToManual(forcedAllocations, produtoAlvo.operacoes);
+    const mapped = mapOperationCandidatesToManual(candidatePools, produtoAlvo.operacoes);
     Object.keys(mapped).forEach((operacaoId) => {
       mapped[operacaoId] = canonicalizeOperatorIds(mapped[operacaoId], operadores);
     });
@@ -593,17 +605,18 @@ export default function FichaTecnica() {
         if (!exists) return [...current, fichaNormalizada];
         return current.map((item) => (item.id === produtoId ? fichaNormalizada : item));
       });
-      void handleCarregarAtribuicoesForcadas(fichaNormalizada);
+      void handleCarregarCandidatePools(fichaNormalizada);
     } catch (error) {
       console.error("Erro ao carregar ficha por codigo:", error);
       setErroApi("Nao foi possivel carregar detalhes da ficha tecnica pelo codigo.");
-      void handleCarregarAtribuicoesForcadas(produtoBase);
+      void handleCarregarCandidatePools(produtoBase);
     } finally {
       setLoadingFichaPorCodigo(false);
     }
   };
 
   const handleSelecionarFicha = (produtoId: string) => {
+    produtoSelecionadoRef.current = produtoId;
     setProdutoSelecionado(produtoId);
     setOperacaoPendenteSync(null, null);
     setAtribuicoesManual({});
@@ -666,6 +679,7 @@ export default function FichaTecnica() {
         next[existingIndex] = createdProduto;
         return next;
       });
+      produtoSelecionadoRef.current = createdProduto.id;
       setProdutoSelecionado(createdProduto.id);
       setMensagemGuardado("Ficha tecnica criada com sucesso");
       setTimeout(() => setMensagemGuardado(null), 3000);
@@ -695,6 +709,7 @@ export default function FichaTecnica() {
       dataModificacao: new Date().toISOString().split("T")[0],
     };
     setProdutos([...produtos, newProd]);
+    produtoSelecionadoRef.current = newProd.id;
     setProdutoSelecionado(newProd.id);
   };
 
@@ -1117,8 +1132,6 @@ export default function FichaTecnica() {
       [operacaoId]: operadoresCanonicalizados,
     }));
 
-    if (operadoresCanonicalizados.length === 0) return;
-
     const operacaoAtual =
       produtoAtual.operacoes.find((item) => item.id === operacaoId) ||
       produtoAtual.operacoes.find((item) => String(item.sequencia) === operacaoId) ||
@@ -1136,47 +1149,59 @@ export default function FichaTecnica() {
     ) as string[];
 
     if (taskIds.length === 0 || operationCodeCandidates.length === 0) {
-      throw new Error("Sem task_id ou op_code valido para guardar atribuicao forcada.");
+      throw new Error("Sem task_id ou op_code valido para guardar candidatos.");
     }
 
     try {
-      for (const operadorId of operadoresCanonicalizados) {
-        let atribuicaoGuardada = false;
-        let ultimaFalha: unknown = null;
+      let atribuicaoGuardada = false;
+      let ultimaFalha: unknown = null;
 
-        for (const taskId of taskIds) {
-          for (const operationCode of operationCodeCandidates) {
-            try {
-              await axios.patch(
-                `${API_BASE_URL}/technical-sheets/${encodeURIComponent(taskId)}/forced-allocations`,
+      for (const taskId of taskIds) {
+        for (const operationCode of operationCodeCandidates) {
+          try {
+            if (operadoresCanonicalizados.length > 0) {
+              await axios.put(
+                `${API_BASE_URL}/technical-sheets/${encodeURIComponent(taskId)}/candidate-pools/${encodeURIComponent(operationCode)}`,
                 {
-                  op_code: operationCode,
-                  collaborator_id: operadorId,
+                  collaborator_ids: operadoresCanonicalizados,
                 }
               );
+            } else {
+              await axios.delete(
+                `${API_BASE_URL}/technical-sheets/${encodeURIComponent(taskId)}/candidate-pools/${encodeURIComponent(operationCode)}`
+              );
+            }
+            atribuicaoGuardada = true;
+            break;
+          } catch (error) {
+            if (
+              operadoresCanonicalizados.length === 0 &&
+              axios.isAxiosError(error) &&
+              error.response?.status === 404
+            ) {
+              // Se já não existir pool para a operação, consideramos limpo.
               atribuicaoGuardada = true;
               break;
-            } catch (error) {
-              ultimaFalha = error;
             }
+            ultimaFalha = error;
           }
-          if (atribuicaoGuardada) break;
         }
+        if (atribuicaoGuardada) break;
+      }
 
-        if (!atribuicaoGuardada) {
-          throw ultimaFalha || new Error("Falha ao guardar atribuicao forcada.");
-        }
+      if (!atribuicaoGuardada) {
+        throw ultimaFalha || new Error("Falha ao guardar candidatos para a operação.");
       }
 
       const produtoAtualizado =
         produtosRef.current.find((item) => item.id === produtoAtual.id) || produtoAtual;
-      await handleCarregarAtribuicoesForcadas(produtoAtualizado);
+      await handleCarregarCandidatePools(produtoAtualizado);
     } catch (error) {
-      console.error("Erro ao guardar atribuicoes forçadas:", error);
-      setErroApi("Nao foi possivel guardar atribuicoes forçadas na API.");
+      console.error("Erro ao guardar candidatos da operacao:", error);
+      setErroApi("Nao foi possivel guardar candidatos da operacao na API.");
       const produtoAtualizado =
         produtosRef.current.find((item) => item.id === produtoAtual.id) || produtoAtual;
-      await handleCarregarAtribuicoesForcadas(produtoAtualizado);
+      await handleCarregarCandidatePools(produtoAtualizado);
       throw error;
     }
   };

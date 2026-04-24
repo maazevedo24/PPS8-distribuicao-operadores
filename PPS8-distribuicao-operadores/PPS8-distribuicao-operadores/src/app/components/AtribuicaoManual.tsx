@@ -254,7 +254,10 @@ export function AtribuicaoManual({
   };
 
   const handleLimparTodas = () => {
-    void Promise.all(operacoes.map((op) => onAtribuirManualmente(op.id, []))).catch((error) => {
+    const operacoesComAtribuicao = operacoes.filter(
+      (op) => (atribuicoesManual[op.id] || []).length > 0
+    );
+    void Promise.all(operacoesComAtribuicao.map((op) => onAtribuirManualmente(op.id, []))).catch((error) => {
       console.error("Erro ao limpar atribuicoes manuais:", error);
     });
   };

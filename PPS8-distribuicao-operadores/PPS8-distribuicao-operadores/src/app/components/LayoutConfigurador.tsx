@@ -41,7 +41,9 @@ interface LayoutConfiguradorProps {
 export function LayoutConfigurador({ operacoes, onLayoutChange, agruparPorMaquina = false }: LayoutConfiguradorProps) {
   const [tipoLayout, setTipoLayout] = useState<"linha" | "espinha">("linha");
   const [postosPorLado, setPostosPorLado] = useState(8);
+  const [postosPorLadoInput, setPostosPorLadoInput] = useState("8");
   const [distanciaMaxima, setDistanciaMaxima] = useState(3);
+  const [distanciaMaximaInput, setDistanciaMaximaInput] = useState("3");
   const [permitirRetrocesso, setPermitirRetrocesso] = useState(false);
   const [permitirCruzamento, setPermitirCruzamento] = useState(true);
   const [restricoes, setRestricoes] = useState<any[]>([]);
@@ -53,6 +55,7 @@ export function LayoutConfigurador({ operacoes, onLayoutChange, agruparPorMaquin
     obrigatoria: false,
     motivo: "",
   });
+  const [distanciaRestricaoInput, setDistanciaRestricaoInput] = useState("2");
 
   const tiposMaquinas = Array.from(new Set(operacoes.map(op => op.tipoMaquina || "Geral")));
 
@@ -67,6 +70,18 @@ export function LayoutConfigurador({ operacoes, onLayoutChange, agruparPorMaquin
       restricoes,
     });
   }, [tipoLayout, postosPorLado, distanciaMaxima, permitirRetrocesso, permitirCruzamento, restricoes]);
+
+  useEffect(() => {
+    setPostosPorLadoInput(String(postosPorLado));
+  }, [postosPorLado]);
+
+  useEffect(() => {
+    setDistanciaMaximaInput(String(distanciaMaxima));
+  }, [distanciaMaxima]);
+
+  useEffect(() => {
+    setDistanciaRestricaoInput(String(novaRestricao.distanciaMaxima));
+  }, [novaRestricao.distanciaMaxima]);
 
   return (
     <div className="sticky top-[52px] z-30 bg-gray-50 pb-3 pt-3">
@@ -138,8 +153,23 @@ export function LayoutConfigurador({ operacoes, onLayoutChange, agruparPorMaquin
                     type="number"
                     min={4}
                     max={16}
-                    value={postosPorLado}
-                    onChange={(e) => setPostosPorLado(Number(e.target.value))}
+                    value={postosPorLadoInput}
+                    onChange={(e) => {
+                      const raw = e.currentTarget.value;
+                      setPostosPorLadoInput(raw);
+                      if (raw.trim() === "") return;
+                      const next = Number(raw.replace(",", "."));
+                      if (!Number.isFinite(next)) return;
+                      setPostosPorLado(next);
+                    }}
+                    onBlur={() => {
+                      const parsed = Number(postosPorLadoInput.replace(",", "."));
+                      const next = Number.isFinite(parsed)
+                        ? Math.max(4, Math.min(16, Math.round(parsed)))
+                        : postosPorLado;
+                      setPostosPorLado(next);
+                      setPostosPorLadoInput(String(next));
+                    }}
                     className="rounded-sm mt-0.5 h-7 text-[10px]"
                   />
                 </div>
@@ -151,8 +181,23 @@ export function LayoutConfigurador({ operacoes, onLayoutChange, agruparPorMaquin
                       type="number"
                       min={1}
                       max={8}
-                      value={distanciaMaxima}
-                      onChange={(e) => setDistanciaMaxima(Number(e.target.value))}
+                      value={distanciaMaximaInput}
+                      onChange={(e) => {
+                        const raw = e.currentTarget.value;
+                        setDistanciaMaximaInput(raw);
+                        if (raw.trim() === "") return;
+                        const next = Number(raw.replace(",", "."));
+                        if (!Number.isFinite(next)) return;
+                        setDistanciaMaxima(next);
+                      }}
+                      onBlur={() => {
+                        const parsed = Number(distanciaMaximaInput.replace(",", "."));
+                        const next = Number.isFinite(parsed)
+                          ? Math.max(1, Math.min(8, Math.round(parsed)))
+                          : distanciaMaxima;
+                        setDistanciaMaxima(next);
+                        setDistanciaMaximaInput(String(next));
+                      }}
                       className="rounded-sm mt-0.5 h-7 text-[10px]"
                     />
                   </div>
@@ -217,7 +262,30 @@ export function LayoutConfigurador({ operacoes, onLayoutChange, agruparPorMaquin
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="lc-distanciaRestricao">Distancia Maxima (postos)</Label>
-                        <Input id="lc-distanciaRestricao" type="number" min={1} max={8} value={novaRestricao.distanciaMaxima} onChange={(e) => setNovaRestricao({ ...novaRestricao, distanciaMaxima: Number(e.target.value) })} className="rounded-sm" />
+                        <Input
+                          id="lc-distanciaRestricao"
+                          type="number"
+                          min={1}
+                          max={8}
+                          value={distanciaRestricaoInput}
+                          onChange={(e) => {
+                            const raw = e.currentTarget.value;
+                            setDistanciaRestricaoInput(raw);
+                            if (raw.trim() === "") return;
+                            const next = Number(raw.replace(",", "."));
+                            if (!Number.isFinite(next)) return;
+                            setNovaRestricao({ ...novaRestricao, distanciaMaxima: next });
+                          }}
+                          onBlur={() => {
+                            const parsed = Number(distanciaRestricaoInput.replace(",", "."));
+                            const next = Number.isFinite(parsed)
+                              ? Math.max(1, Math.min(8, Math.round(parsed)))
+                              : (novaRestricao.distanciaMaxima || 2);
+                            setNovaRestricao({ ...novaRestricao, distanciaMaxima: next });
+                            setDistanciaRestricaoInput(String(next));
+                          }}
+                          className="rounded-sm"
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="lc-motivo">Motivo/Razao</Label>

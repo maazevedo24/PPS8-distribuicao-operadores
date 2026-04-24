@@ -276,6 +276,98 @@ const findRowOperationId = (row: ApiRecord, operacoesBase: Operacao[]): string |
   return null;
 };
 
+const extrairDistribuicaoDeOperationAllocations = (
+  rows: ApiRecord[],
+  operacoesBase: Operacao[],
+  operadoresPool: Operador[],
+  tempoCiclo: number
+): DistItem[] => {
+  const mapa: Record<string, { operacoes: Set<string>; tempoTotal: number; temposOperacoes: Record<string, number> }> = {};
+
+  const ensureOperador = (operadorId: string) => {
+    if (!mapa[operadorId]) {
+      mapa[operadorId] = { operacoes: new Set(), tempoTotal: 0, temposOperacoes: {} };
+    }
+  };
+
+  const processarTempo = (operadorRef: string, operacaoId: string, tempoSegundos: number) => {
+    const operadorId = mapOperatorToCode(operadorRef, operadoresPool);
+    if (!operadorId) return;
+    ensureOperador(operadorId);
+    if (operacaoId) mapa[operadorId].operacoes.add(operacaoId);
+    const tempoMinutos = tempoSegundos / 60;
+    mapa[operadorId].tempoTotal += tempoMinutos;
+    if (operacaoId) {
+      mapa[operadorId].temposOperacoes[operacaoId] =
+        (mapa[operadorId].temposOperacoes[operacaoId] || 0) + tempoMinutos;
+    }
+  };
+
+  for (const row of rows) {
+    const operacaoRef =
+      pickString(row, [
+        "operation_code",
+        "operation_id",
+        "operacao_id",
+        "operation",
+        "operacao",
+        "operation_name",
+        "operacao_nome",
+        "name",
+        "nome",
+      ]) || "";
+    const operacaoId = operacaoRef ? findOperacaoIdByReferencia(operacaoRef, operacoesBase) || operacaoRef : (findRowOperationId(row, operacoesBase) || "");
+
+    const operatorTimes = row.operator_times && typeof row.operator_times === "object" ? row.operator_times : {};
+    if (Object.keys(operatorTimes).length > 0) {
+      Object.entries(operatorTimes).forEach(([operatorRef, timeValue]) => {
+        const tempoSegundos = parseRawNumber(timeValue);
+        if (tempoSegundos == null || !Number.isFinite(tempoSegundos) || tempoSegundos <= 0) return;
+        processarTempo(operatorRef, operacaoId, tempoSegundos);
+      });
+      continue;
+    }
+
+    const operatorPositions = row.operator_positions && typeof row.operator_positions === "object" ? row.operator_positions : {};
+    if (Object.keys(operatorPositions).length > 0) {
+      Object.entries(operatorPositions).forEach(([operatorRef, position]) => {
+        const tempoSegundos = parseRawNumber((position as ApiRecord).time_seconds ?? (position as ApiRecord).seconds);
+        if (tempoSegundos == null || !Number.isFinite(tempoSegundos) || tempoSegundos <= 0) return;
+        processarTempo(operatorRef, operacaoId, tempoSegundos);
+      });
+      continue;
+    }
+
+    if (Array.isArray(row.operator_allocations)) {
+      for (const allocation of row.operator_allocations) {
+        const record = allocation as ApiRecord;
+        const operatorRef = pickString(record, ["operator_code", "operator_id", "operador_id", "operator", "operador", "code"]);
+        if (!operatorRef) continue;
+        const tempoSegundos = parseRawNumber(
+          record.time_seconds ??
+          record.tempo_segundos ??
+          record.seconds ??
+          record.time
+        );
+        if (tempoSegundos == null || !Number.isFinite(tempoSegundos) || tempoSegundos <= 0) continue;
+        processarTempo(operatorRef, operacaoId, tempoSegundos);
+      }
+    }
+  }
+
+  return Object.entries(mapa).map(([operadorId, dados]) => {
+    const ocupacao = tempoCiclo > 0 ? (dados.tempoTotal / tempoCiclo) * 100 : 0;
+    return {
+      operadorId,
+      operacoes: Array.from(dados.operacoes),
+      cargaHoraria: dados.tempoTotal,
+      ocupacao,
+      ciclosPorHora: dados.tempoTotal > 0 ? 60 / dados.tempoTotal : 0,
+      temposOperacoes: dados.temposOperacoes,
+    };
+  });
+};
+
 const extrairOperacoesPorReferencia = (raw: unknown, operacoesBase: Operacao[]): string[] => {
   const refs: string[] = [];
 
@@ -1185,6 +1277,8 @@ export default function Home() {
         };
         const limitNotDivideUpper = Math.max(1.01, Number(config.naoDividirMaiorQue) || 1.1);
         const limitNotDivideLower = Math.min(0.99, Math.max(0, Number(config.naoDividirMenorQue) || 0.9));
+        const postosPorLado = Math.max(1, Math.trunc(Number(layoutConfig.postosPorLado) || 0));
+        const maxPosts = layoutConfig.tipoLayout === "espinha" ? postosPorLado * 2 : postosPorLado;
 
         const payloadBase = {
           efficiency: normalizarRatio(config.produtividadeEstimada),
@@ -1193,6 +1287,7 @@ export default function Home() {
           limit_not_divide_upper: limitNotDivideUpper,
           limit_not_divide_lower: limitNotDivideLower,
           line_type: layoutConfig.tipoLayout,
+          max_posts: maxPosts,
         };
         const payload = config.agruparMaquinas
           ? {
@@ -1227,8 +1322,15 @@ export default function Home() {
           r.distribution ??
           r.distribuicao
         );
+        const operationAllocations = ensureArray(
+          r.operation_allocations ??
+          r.operationAllocations
+        );
 
         let distribuicao = extrairDistribuicaoDeTableData(r, operacoes, tempoCiclo, operadoresDisponiveis);
+        if (distribuicao.length === 0 && operationAllocations.length > 0) {
+          distribuicao = extrairDistribuicaoDeOperationAllocations(operationAllocations, operacoes, operadoresDisponiveis, tempoCiclo);
+        }
         const mapa: Record<string, { operacoes: Set<string>; tempoTotal: number; temposOperacoes: Record<string, number> }> = {};
 
         if (distribuicao.length === 0) {
@@ -1293,6 +1395,7 @@ export default function Home() {
 
         const resultadosApi = {
           distribuicao,
+          operation_allocations: operationAllocations,
           taktTime,
           tempoCiclo,
           numeroCiclosPorHora,
@@ -1353,15 +1456,23 @@ export default function Home() {
           `${API_BASE_URL}/tasks/${encodeURIComponent(taskCode)}/allocate-custom`,
           { assignments }
         );
-        const r = resposta.data;
+        const r = ensureRecord(resposta.data) ?? {};
 
         // Mapear resposta da API para ResultadosBalanceamento
-        const taktTime = (r.takt_time != null ? r.takt_time / 60 : (r.taktTime ?? 0));
-        const tempoCiclo = r.real_cycle_time_seconds != null ? r.real_cycle_time_seconds / 60 : (r.cycle_time ?? r.tempoCiclo ?? 0);
-        const numeroCiclosPorHora = r.production_per_hour ?? (tempoCiclo > 0 ? 60 / tempoCiclo : 0);
-        const produtividade = r.estimated_productivity ?? 0;
-        const perdas = NaN; // nao disponÃ­vel neste modo
+        const taktTime = (pickNumber(r, ["takt_time_seconds", "takt_time", "taktTime"]) ?? 0) / 60;
+        const tempoCicloApi = pickNumber(r, ["real_cycle_time_seconds", "cycle_time_seconds", "cycle_time", "tempo_ciclo_segundos"]);
+        const tempoCiclo = tempoCicloApi != null
+          ? (tempoCicloApi > 10 ? tempoCicloApi / 60 : tempoCicloApi)
+          : 0;
+        const numeroCiclosPorHora = pickNumber(r, ["production_per_hour", "numero_ciclos_por_hora"]) ?? (tempoCiclo > 0 ? 60 / tempoCiclo : 0);
+        const produtividadeRaw = pickNumber(r, ["estimated_productivity", "productivity", "produtividade_estimada"]) ?? 0;
+        const produtividade = produtividadeRaw <= 1 ? produtividadeRaw * 100 : produtividadeRaw;
+        const perdas = Math.max(0, 100 - produtividade);
         const numeroOperadores = r.num_operators ?? r.numero_operadores ?? r.numeroOperadores ?? new Set(assignments.map((a) => a.operator_id).filter(Boolean)).size;
+        const operationAllocations = ensureArray(
+          r.operation_allocations ??
+          r.operationAllocations
+        );
 
         // Construir distribuicao por operador a partir dos assignments enviados (por operacao)
         const mapa: Record<string, { operacoes: Set<string>; tempoTotal: number; temposOperacoes: Record<string, number> }> = {};
@@ -1388,6 +1499,7 @@ export default function Home() {
 
         const resultadosCustom = {
           distribuicao,
+          operation_allocations: operationAllocations,
           taktTime,
           tempoCiclo,
           numeroCiclosPorHora,
@@ -1695,7 +1807,11 @@ export default function Home() {
                       <input
                         type="number" step="0.5" min={1} max={24}
                         value={config.horasTurno}
-                        onChange={(e) => handleConfigChange({ ...config, horasTurno: Number(e.target.value) })}
+                        onChange={(e) => {
+                          const next = e.currentTarget.valueAsNumber;
+                          if (!Number.isFinite(next)) return;
+                          handleConfigChange({ ...config, horasTurno: next });
+                        }}
                         className="bg-white border border-gray-300 px-4 py-3 text-sm text-gray-900 font-semibold rounded-r-sm w-32 text-right focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                       />
                     </div>
@@ -1706,7 +1822,11 @@ export default function Home() {
                       <input
                         type="number" step="1" min={0} max={100}
                         value={config.produtividadeEstimada}
-                        onChange={(e) => handleConfigChange({ ...config, produtividadeEstimada: Number(e.target.value) })}
+                        onChange={(e) => {
+                          const next = e.currentTarget.valueAsNumber;
+                          if (!Number.isFinite(next)) return;
+                          handleConfigChange({ ...config, produtividadeEstimada: next });
+                        }}
                         className="bg-white border border-gray-300 px-4 py-3 text-sm text-gray-900 font-semibold rounded-r-sm w-32 text-right focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                       />
                     </div>
@@ -1733,7 +1853,11 @@ export default function Home() {
                         type="number" min={1}
                         value={config.quantidadeObjetivo || ""}
                         onChange={(e) => {
-                          const quantidade = Number(e.target.value);
+                          const quantidade = e.currentTarget.valueAsNumber;
+                          if (!Number.isFinite(quantidade)) {
+                            handleConfigChange({ ...config, quantidadeObjetivo: undefined });
+                            return;
+                          }
                           handleConfigChange({ ...config, quantidadeObjetivo: quantidade });
                           if (quantidade > 0) handleCalcularOperadoresNecessarios(quantidade);
                         }}
@@ -1748,7 +1872,11 @@ export default function Home() {
                       <input
                         type="number" step="0.5" min={1} max={24}
                         value={config.horasTurno}
-                        onChange={(e) => handleConfigChange({ ...config, horasTurno: Number(e.target.value) })}
+                        onChange={(e) => {
+                          const next = e.currentTarget.valueAsNumber;
+                          if (!Number.isFinite(next)) return;
+                          handleConfigChange({ ...config, horasTurno: next });
+                        }}
                         className="bg-white border border-gray-300 px-4 py-3 text-sm text-gray-900 font-semibold rounded-r-sm w-32 text-right focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                       />
                     </div>
@@ -1765,7 +1893,9 @@ export default function Home() {
                         type="number" min={1} max={operadores.length}
                         value={config.numeroOperadores || operadoresSelecionados.length}
                         onChange={(e) => {
-                          const num = Math.min(Number(e.target.value), operadores.length);
+                          const typed = e.currentTarget.valueAsNumber;
+                          if (!Number.isFinite(typed)) return;
+                          const num = Math.max(1, Math.min(typed, operadores.length));
                           handleConfigChange({ ...config, numeroOperadores: num });
                           const novos = operadores.slice(0, num).map((op) => op.id);
                           setDadosUnidades((prev) => ({
@@ -1791,7 +1921,11 @@ export default function Home() {
                       <input
                         type="number" step="0.5" min={1} max={24}
                         value={config.horasTurno}
-                        onChange={(e) => handleConfigChange({ ...config, horasTurno: Number(e.target.value) })}
+                        onChange={(e) => {
+                          const next = e.currentTarget.valueAsNumber;
+                          if (!Number.isFinite(next)) return;
+                          handleConfigChange({ ...config, horasTurno: next });
+                        }}
                         className="bg-white border border-gray-300 px-4 py-3 text-sm text-gray-900 font-semibold rounded-r-sm w-32 text-right focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                       />
                     </div>
@@ -1927,5 +2061,3 @@ export default function Home() {
     </main>
   );
 }
-
-
