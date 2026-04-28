@@ -20,6 +20,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 
 // â”€â”€â”€ Valores por defeito â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -757,6 +765,10 @@ const extrairMensagemErro = (error: unknown): string => {
     }
 
     if (typeof data?.detail === "string" && data.detail.trim()) return data.detail;
+    if (data?.detail && typeof data.detail === "object") {
+      const detail = data.detail as { message?: unknown };
+      if (typeof detail.message === "string" && detail.message.trim()) return detail.message;
+    }
     if (typeof data?.message === "string" && data.message.trim()) return data.message;
     if (typeof data?.error === "string" && data.error.trim()) return data.error;
     if (typeof error.message === "string" && error.message.trim()) return error.message;
@@ -888,6 +900,7 @@ export default function Home() {
   const [quantidadeObjetivoInput, setQuantidadeObjetivoInput] = useState("");
   const [numeroOperadoresInput, setNumeroOperadoresInput] = useState("");
   const [erroApi, setErroApi] = useState<string | null>(null);
+  const [erroCalculoModal, setErroCalculoModal] = useState<string | null>(null);
 
   useEffect(() => {
     if (sincronizado) return;
@@ -1950,6 +1963,18 @@ export default function Home() {
       navigate("/resultados", { state: dataToPass });
     } catch (error) {
       console.error("Erro ao calcular balanceamento:", error);
+      if (axios.isAxiosError(error) && error.response?.status === 422) {
+        const data = error.response?.data as { detail?: unknown } | undefined;
+        let mensagem422 = "";
+        if (data?.detail && typeof data.detail === "object") {
+          const detail = data.detail as { message?: unknown };
+          if (typeof detail.message === "string" && detail.message.trim()) {
+            mensagem422 = detail.message;
+          }
+        }
+        setErroCalculoModal(mensagem422 || extrairMensagemErro(error));
+        return;
+      }
       alert(`Erro ao calcular balanceamento:\n${extrairMensagemErro(error)}`);
     }
   };
@@ -2433,6 +2458,31 @@ export default function Home() {
           Calcular Balanceamento
         </Button>
       </div>
+
+      <Dialog
+        open={Boolean(erroCalculoModal)}
+        onOpenChange={(open) => {
+          if (!open) setErroCalculoModal(null);
+        }}
+      >
+        <DialogContent className="rounded-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold">Erro ao calcular balanceamento</DialogTitle>
+            <DialogDescription className="text-xs">
+              {erroCalculoModal || "Ocorreu um erro inesperado."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              className="bg-orange-600 hover:bg-orange-700 rounded-sm text-xs"
+              onClick={() => setErroCalculoModal(null)}
+            >
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
