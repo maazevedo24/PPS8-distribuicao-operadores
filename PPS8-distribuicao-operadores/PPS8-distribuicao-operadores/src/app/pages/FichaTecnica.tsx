@@ -331,6 +331,30 @@ interface FamilyOption {
   label: string;
 }
 
+interface ExcelImportMetadata {
+  fileName: string;
+  fichaCode: string;
+  fichaName: string;
+  descricao: string;
+}
+
+const buildImportMetadataFromFileName = (fileName: string): ExcelImportMetadata => {
+  const baseName = fileName.replace(/\.[^.]+$/, "").trim();
+  const rawCode = baseName.split(/[\s_-]+/).find(Boolean) || baseName || "IMPORTED";
+  const fichaCode = rawCode
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "IMPORTED";
+
+  return {
+    fileName,
+    fichaCode,
+    fichaName: baseName || fichaCode,
+    descricao: `Importado automaticamente de ${fileName}`,
+  };
+};
+
 export default function FichaTecnica() {
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [produtoSelecionado, setProdutoSelecionado] = useState<string | null>(null);
@@ -342,6 +366,8 @@ export default function FichaTecnica() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importPreview, setImportPreview] = useState<Operacao[] | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importMetadata, setImportMetadata] = useState<ExcelImportMetadata | null>(null);
+  const [importingGamas, setImportingGamas] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [familias, setFamilias] = useState<FamilyOption[]>([]);
   const [grupoArtigoSelecionado, setGrupoArtigoSelecionado] = useState<string>("");
@@ -353,6 +379,7 @@ export default function FichaTecnica() {
   const [addingOperacao, setAddingOperacao] = useState(false);
   const [savingOperacoes, setSavingOperacoes] = useState(false);
   const [removingOperacaoId, setRemovingOperacaoId] = useState<string | null>(null);
+  const [produtoParaRemover, setProdutoParaRemover] = useState<Produto | null>(null);
   const [operacaoParaRemover, setOperacaoParaRemover] = useState<Operacao | null>(null);
   const [erroApi, setErroApi] = useState<string | null>(null);
   const operacaoPendenteSyncIndexRef = useRef<number | null>(null);
@@ -547,66 +574,11 @@ export default function FichaTecnica() {
     const produtoBase = sourceProdutos.find((item) => item.id === produtoId);
     if (!produtoBase) return;
 
-    const codigosTentativa = Array.from(
-      new Set([produtoBase.id, produtoBase.referencia].map((value) => value?.trim()).filter(Boolean))
-    ) as string[];
-    if (codigosTentativa.length === 0) return;
-
     setLoadingFichaPorCodigo(true);
-    setErroApi(null);
     setAtribuicoesManual({});
 
     try {
-      let technicalSheet: ApiRecord | null = null;
-      let codigoResolvido = codigosTentativa[0];
-      let ultimaFalha: unknown = null;
-
-      for (const codigo of codigosTentativa) {
-        try {
-          const resposta = await axios.get(
-            `${API_BASE_URL}/technical-sheets/code/${encodeURIComponent(codigo)}`
-          );
-          const candidate = ensureRecord(resposta.data);
-          if (candidate) {
-            technicalSheet = candidate;
-            codigoResolvido = codigo;
-            break;
-          }
-        } catch (error) {
-          ultimaFalha = error;
-        }
-      }
-
-      if (!technicalSheet) {
-        throw ultimaFalha || new Error("Resposta invalida para ficha tecnica por codigo");
-      }
-
-      const familyId =
-        pickString(technicalSheet, ["family_id", "family", "group_id"]) ||
-        grupoArtigoSelecionado;
-
-      const ficha = mapApiTaskToProduto(technicalSheet, 0, familyId);
-      const referenciaCodigo =
-        pickString(technicalSheet, ["code", "task_code", "reference", "referencia"]) ||
-        ficha.referencia ||
-        codigoResolvido;
-      const fichaNormalizada: Produto = {
-        ...produtoBase,
-        ...ficha,
-        id: produtoBase.id,
-        referencia: referenciaCodigo,
-      };
-
-      setProdutos((current) => {
-        const exists = current.some((item) => item.id === produtoId);
-        if (!exists) return [...current, fichaNormalizada];
-        return current.map((item) => (item.id === produtoId ? fichaNormalizada : item));
-      });
-      void handleCarregarCandidatePools(fichaNormalizada);
-    } catch (error) {
-      console.error("Erro ao carregar ficha por codigo:", error);
-      setErroApi("Nao foi possivel carregar detalhes da ficha tecnica pelo codigo.");
-      void handleCarregarCandidatePools(produtoBase);
+      await handleCarregarCandidatePools(produtoBase);
     } finally {
       setLoadingFichaPorCodigo(false);
     }
@@ -758,6 +730,17 @@ export default function FichaTecnica() {
     } finally {
       setDeletingProdutoId((current) => (current === prodId ? null : current));
     }
+  };
+
+  const solicitarRemocaoProduto = (prod: Produto) => {
+    setProdutoParaRemover(prod);
+  };
+
+  const handleConfirmarRemocaoProduto = async () => {
+    if (!produtoParaRemover) return;
+    const productId = produtoParaRemover.id;
+    await handleRemoverProduto(productId);
+    setProdutoParaRemover((current) => (current?.id === productId ? null : current));
   };
 
   const handleAddOperacao = async () => {
@@ -1206,7 +1189,10 @@ export default function FichaTecnica() {
   const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     setImportError(null);
+    setImportMetadata(buildImportMetadataFromFileName(file.name));
+
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
@@ -1219,7 +1205,15 @@ export default function FichaTecnica() {
         const parsed: Operacao[] = rows
           .filter((r) => {
             const keys = Object.keys(r).map(k => k.toLowerCase().trim());
-            return keys.some(k => k.includes("operac") || k.includes("nome") || k.includes("descric"));
+            return keys.some(
+              (k) =>
+                k.includes("operac") ||
+                k.includes("nome") ||
+                k.includes("descric") ||
+                k.includes("designa") ||
+                k.includes("cód") ||
+                k.includes("cod")
+            );
           })
           .map((r, idx) => {
             const get = (patterns: string[]) => {
@@ -1232,12 +1226,15 @@ export default function FichaTecnica() {
             const tempo = parseFloat(tempoRaw.replace(",", ".")) || 0;
             const seqRaw = get(["seq", "ordem", "order", "nº", "no", "num"]);
             const seq = parseInt(seqRaw) || (idx + 1);
+            const finalRaw = get(["final", "crit"]);
+            const finalNormalized = finalRaw.toLowerCase();
             return {
               id: get(["id", "cod", "ref", "código"]) || `OP${String(idx + 1).padStart(3, "0")}`,
-              nome: get(["operac", "nome", "descric", "operação", "descrição", "name"]),
+              nome: get(["operac", "nome", "descric", "operação", "descrição", "name", "designa"]),
               tempo,
               tipoMaquina: get(["maquin", "máquin", "machine", "tipo", "grupo"]),
               sequencia: seq,
+              critica: ["sim", "yes", "true", "1", "x"].includes(finalNormalized),
             } as Operacao;
           })
           .filter(op => op.nome);
@@ -1251,6 +1248,8 @@ export default function FichaTecnica() {
         setImportPreview(parsed);
         setShowImportDialog(true);
       } catch (err) {
+        setImportPreview(null);
+        setImportMetadata(null);
         setImportError("Erro ao ler o ficheiro. Certifique-se que é um ficheiro Excel (.xlsx ou .xls).");
       }
     };
@@ -1259,18 +1258,130 @@ export default function FichaTecnica() {
     e.target.value = "";
   };
 
-  const handleConfirmImport = () => {
-    if (!produto || !importPreview) return;
-    const updated = produtos.map(p =>
-      p.id === produto.id
-        ? { ...p, operacoes: importPreview, dataModificacao: new Date().toISOString().split("T")[0] }
-        : p
-    );
-    setProdutos(updated);
-    setImportPreview(null);
-    setShowImportDialog(false);
-    setMensagemGuardado(`${importPreview.length} operações importadas com sucesso`);
-    setTimeout(() => setMensagemGuardado(null), 3000);
+  const handleConfirmImport = async () => {
+    if (!importPreview?.length || !importMetadata) return;
+
+    const familyId = grupoArtigoSelecionado || familias[0]?.id;
+    if (!familyId) {
+      setImportError("Selecione um grupo de artigo antes de importar.");
+      return;
+    }
+
+    setImportingGamas(true);
+    setErroApi(null);
+    setImportError(null);
+
+    try {
+      const existingCodes = new Set(
+        produtos.map((item) => normalizeToken(item.referencia || item.id || ""))
+      );
+      let fichaCode = importMetadata.fichaCode;
+      if (existingCodes.has(normalizeToken(fichaCode))) {
+        fichaCode = `${fichaCode}-IMP-${Date.now().toString().slice(-4)}`;
+      }
+
+      const createPayload = {
+        code: fichaCode,
+        name: importMetadata.fichaName,
+        family_id: familyId,
+        description: importMetadata.descricao,
+        operations: [] as ApiRecord[],
+      };
+
+      const createResponse = await axios.post(`${API_BASE_URL}/technical-sheets/`, createPayload);
+      const createdRecord = ensureRecord(createResponse.data);
+      if (!createdRecord) {
+        throw new Error("Resposta inválida ao criar ficha técnica por importação.");
+      }
+
+      const mappedCreated = mapApiTaskToProduto(createdRecord, produtos.length, familyId);
+      const createdProduto: Produto = {
+        ...mappedCreated,
+        nome: pickString(createdRecord, ["name", "task_name", "nome"]) || importMetadata.fichaName,
+        referencia: pickString(createdRecord, ["code", "reference", "referencia"]) || fichaCode,
+        descricao: importMetadata.descricao,
+      };
+
+      const taskIds = Array.from(
+        new Set([createdProduto.id, createdProduto.referencia].map((value) => value?.trim()).filter(Boolean))
+      ) as string[];
+      if (taskIds.length === 0) {
+        throw new Error("Task ID inválido para importar operações.");
+      }
+
+      const opsSorted = [...importPreview].sort((a, b) => a.sequencia - b.sequencia);
+      const failedOps: string[] = [];
+      const savedOps: Operacao[] = [];
+
+      for (const operacao of opsSorted) {
+        const opPayload = {
+          code: String(operacao.id).trim(),
+          designation: String(operacao.nome).trim(),
+          is_critical: Boolean(operacao.critica),
+          machine_type: String(operacao.tipoMaquina || "").trim(),
+          sequence_order: operacao.sequencia,
+          time_cmin: Math.round(Number(operacao.tempo) * 100),
+        };
+
+        let opSaved = false;
+        for (const taskId of taskIds) {
+          try {
+            await axios.post(
+              `${API_BASE_URL}/technical-sheets/${encodeURIComponent(taskId)}/add-operation`,
+              opPayload
+            );
+            opSaved = true;
+            break;
+          } catch {
+            // tenta próximo identificador da ficha
+          }
+        }
+
+        if (!opSaved) {
+          failedOps.push(opPayload.code);
+        } else {
+          savedOps.push(operacao);
+        }
+      }
+
+      const createdProdutoComOperacoes: Produto = {
+        ...createdProduto,
+        operacoes: savedOps.map((op, idx) => ({ ...op, sequencia: idx + 1 })),
+        dataModificacao: new Date().toISOString().split("T")[0],
+      };
+
+      setProdutos((current) => {
+        const existingIndex = current.findIndex((item) => item.id === createdProdutoComOperacoes.id);
+        if (existingIndex === -1) return [...current, createdProdutoComOperacoes];
+        const next = [...current];
+        next[existingIndex] = createdProdutoComOperacoes;
+        return next;
+      });
+
+      produtoSelecionadoRef.current = createdProdutoComOperacoes.id;
+      setProdutoSelecionado(createdProdutoComOperacoes.id);
+      setImportPreview(null);
+      setImportMetadata(null);
+      setShowImportDialog(false);
+
+      if (failedOps.length > 0) {
+        setErroApi(
+          `Ficha criada, mas ${failedOps.length} operações não foram importadas (${failedOps.join(", ")}).`
+        );
+      } else {
+        setMensagemGuardado(
+          `Ficha técnica ${createdProdutoComOperacoes.referencia} criada com ${opsSorted.length} operações importadas.`
+        );
+        setTimeout(() => setMensagemGuardado(null), 4000);
+      }
+
+      void handleCarregarCandidatePools(createdProdutoComOperacoes);
+    } catch (error) {
+      console.error("Erro ao importar gamas operatórias:", error);
+      setImportError("Não foi possível criar a ficha técnica e importar as operações pela API.");
+    } finally {
+      setImportingGamas(false);
+    }
   };
 
   const tempoTotal = produto
@@ -1561,7 +1672,7 @@ export default function FichaTecnica() {
                         variant="outline"
                         size="sm"
                         className="rounded-sm text-xs gap-1 text-gray-500 hover:text-orange-600 hover:border-orange-300"
-                        onClick={() => void handleRemoverProduto(produto.id)}
+                        onClick={() => solicitarRemocaoProduto(produto)}
                         disabled={deletingProdutoId === produto.id}
                       >
                         <Trash2 className="w-3 h-3" />
@@ -1724,6 +1835,26 @@ export default function FichaTecnica() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
+                  <div className="flex items-center justify-end gap-2 px-3 py-2 border-b border-gray-200 bg-gray-50/50">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".xlsx,.xls"
+                      className="hidden"
+                      onChange={handleImportExcel}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="rounded-sm text-xs gap-1.5"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={importingGamas || loadingFichas || loadingFichaPorCodigo}
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                      {importingGamas ? "A importar..." : "Importar Gamas Operatórias"}
+                    </Button>
+                  </div>
                   <div className="overflow-x-auto">
                     <table className="w-full border-collapse">
                       <thead>
@@ -1917,6 +2048,45 @@ export default function FichaTecnica() {
       )}
 
       <Dialog
+        open={Boolean(produtoParaRemover)}
+        onOpenChange={(open) => {
+          if (!open && !deletingProdutoId) {
+            setProdutoParaRemover(null);
+          }
+        }}
+      >
+        <DialogContent className="rounded-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold">Confirmar remoção de ficha técnica</DialogTitle>
+            <DialogDescription className="text-xs">
+              {produtoParaRemover
+                ? `Deseja remover a ficha técnica ${produtoParaRemover.referencia} - ${produtoParaRemover.nome}?`
+                : "Deseja remover esta ficha técnica?"}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-sm text-xs"
+              disabled={Boolean(deletingProdutoId)}
+              onClick={() => setProdutoParaRemover(null)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              className="bg-orange-600 hover:bg-orange-700 rounded-sm text-xs"
+              disabled={!produtoParaRemover || Boolean(deletingProdutoId)}
+              onClick={() => void handleConfirmarRemocaoProduto()}
+            >
+              {deletingProdutoId ? "A eliminar..." : "Confirmar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={Boolean(operacaoParaRemover)}
         onOpenChange={(open) => {
           if (!open && !removingOperacaoId) {
@@ -1956,7 +2126,15 @@ export default function FichaTecnica() {
       </Dialog>
 
       {/* Dialog de Importação */}
-      <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
+      <Dialog
+        open={showImportDialog}
+        onOpenChange={(open) => {
+          setShowImportDialog(open);
+          if (!open && !importingGamas) {
+            setImportError(null);
+          }
+        }}
+      >
         <DialogContent className="rounded-sm max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base font-semibold">
@@ -1964,8 +2142,16 @@ export default function FichaTecnica() {
               Pré-visualização da Importação
             </DialogTitle>
             <DialogDescription className="text-xs">
-              {importPreview?.length} operações detectadas — confirme para substituir a gama operatória actual
+              {importPreview?.length} operações detectadas — será criada uma nova ficha técnica e as
+              gamas operatórias serão importadas para essa ficha.
             </DialogDescription>
+            {importMetadata && (
+              <div className="text-xs text-gray-600 mt-2">
+                Ficheiro: <span className="font-medium">{importMetadata.fileName}</span>
+                {" • "}
+                Nova ficha: <span className="font-mono">{importMetadata.fichaCode}</span>
+              </div>
+            )}
           </DialogHeader>
           {importError && (
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-sm flex items-center gap-2 text-amber-700 text-sm">
@@ -2011,16 +2197,23 @@ export default function FichaTecnica() {
             </table>
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setShowImportDialog(false)} className="rounded-sm text-xs">
+            <Button
+              variant="outline"
+              onClick={() => setShowImportDialog(false)}
+              className="rounded-sm text-xs"
+              disabled={importingGamas}
+            >
               Cancelar
             </Button>
             <Button
-              onClick={handleConfirmImport}
+              onClick={() => void handleConfirmImport()}
               className="bg-blue-500 hover:bg-blue-600 rounded-sm text-xs"
-              disabled={!importPreview?.length}
+              disabled={!importPreview?.length || importingGamas}
             >
               <CheckCircle2 className="w-3 h-3 mr-1.5" />
-              Confirmar e Substituir ({importPreview?.length} ops)
+              {importingGamas
+                ? "A criar ficha e importar..."
+                : `Criar Nova Ficha (${importPreview?.length} ops)`}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2028,5 +2221,3 @@ export default function FichaTecnica() {
     </main>
   );
 }
-
-

@@ -211,6 +211,15 @@ const buildRowsFromDistribuicao = (
   distribuicao: DistribuicaoCarga[],
   operacoes: any[]
 ): OperationAllocationRow[] => {
+  const operatorCodeById = new Map<string, string>();
+  distribuicao.forEach((dist, index) => {
+    const rawId = String(dist?.operadorId || "").trim();
+    if (!rawId) return;
+    if (!operatorCodeById.has(rawId)) {
+      operatorCodeById.set(rawId, `OP${operatorCodeById.size + 1}`);
+    }
+  });
+
   const orderedOps = [...operacoes].sort(
     (a, b) => (parseNumberLike(a?.sequencia) ?? 0) - (parseNumberLike(b?.sequencia) ?? 0)
   );
@@ -232,7 +241,9 @@ const buildRowsFromDistribuicao = (
         typeof fromMapMinutes === "number" && Number.isFinite(fromMapMinutes)
           ? fromMapMinutes * 60
           : fallbackPerOperatorSeconds;
-      if (seconds > 0) operatorTimes[dist.operadorId] = seconds;
+      const rawOperatorId = String(dist?.operadorId || "").trim();
+      const operatorCode = operatorCodeById.get(rawOperatorId) || rawOperatorId;
+      if (seconds > 0 && operatorCode) operatorTimes[operatorCode] = seconds;
     });
 
     const allocatedTimeSeconds = Object.values(operatorTimes).reduce(

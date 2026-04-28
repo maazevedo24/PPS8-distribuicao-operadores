@@ -61,6 +61,16 @@ function resolveOperatorCode(operadorId: string, operadores: any[]): string {
   return shortFromRaw || operadorId;
 }
 
+function buildDisplayCodeMap(distribuicao: DistribuicaoCarga[]): Map<string, string> {
+  const map = new Map<string, string>();
+  distribuicao.forEach((dist) => {
+    const rawId = String(dist?.operadorId || "").trim();
+    if (!rawId || map.has(rawId)) return;
+    map.set(rawId, `OP${map.size + 1}`);
+  });
+  return map;
+}
+
 function getBatteryColor(ocupacao: number): string {
   if (ocupacao > 100) return "#F97316";
   if (ocupacao >= 90) return "#10B981";
@@ -83,8 +93,11 @@ export function DashboardResultados({
   operacoes,
   onDistribuicaoChange,
 }: DashboardResultadosProps) {
+  const displayCodeByOperatorId = buildDisplayCodeMap(resultados.distribuicao || []);
   const dadosCarga = resultados.distribuicao.map((dist, index) => {
-    const codigo = resolveOperatorCode(dist.operadorId, operadores);
+    const codigo =
+      displayCodeByOperatorId.get(String(dist?.operadorId || "").trim()) ||
+      resolveOperatorCode(dist.operadorId, operadores);
 
     return {
       idx: `op_${index}`,

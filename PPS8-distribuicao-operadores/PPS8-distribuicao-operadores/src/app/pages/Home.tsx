@@ -885,6 +885,8 @@ export default function Home() {
   const [produtoSelecionado, setProdutoSelecionado] = useState<string | null>(null);
   const [loadingFichas, setLoadingFichas] = useState(false);
   const [loadingFichaPorCodigo, setLoadingFichaPorCodigo] = useState(false);
+  const [quantidadeObjetivoInput, setQuantidadeObjetivoInput] = useState("");
+  const [numeroOperadoresInput, setNumeroOperadoresInput] = useState("");
   const [erroApi, setErroApi] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1111,7 +1113,42 @@ export default function Home() {
     ? operacoesManual
     : (produto ? produto.operacoes : []);
   const usarAllocateModo1Api = config.possibilidade === 1;
+  const usarAllocateObjetivoApi = config.possibilidade === 2;
+  const usarAllocateNumeroOperadoresApi = config.possibilidade === 3;
   const taskCodeSelecionado = (produto?.referencia || produto?.id || grupoArtigoSelecionado || "").trim();
+
+  useEffect(() => {
+    setQuantidadeObjetivoInput(
+      config.quantidadeObjetivo != null && Number.isFinite(config.quantidadeObjetivo)
+        ? String(config.quantidadeObjetivo)
+        : ""
+    );
+  }, [config.quantidadeObjetivo]);
+
+  useEffect(() => {
+    setNumeroOperadoresInput(
+      config.numeroOperadores != null && Number.isFinite(config.numeroOperadores)
+        ? String(config.numeroOperadores)
+        : ""
+    );
+  }, [config.numeroOperadores]);
+
+  useEffect(() => {
+    if (config.possibilidade !== 3) return;
+    if (config.numeroOperadores != null && Number.isFinite(config.numeroOperadores) && config.numeroOperadores >= 1) return;
+    const disponiveis = Math.max(1, operadores.length || 1);
+    const sugerido = Math.max(1, Math.min(operadoresSelecionados.length || disponiveis, disponiveis));
+    setDadosUnidades((prev) => ({
+      ...prev,
+      [unidadeAtiva]: {
+        ...prev[unidadeAtiva],
+        config: {
+          ...prev[unidadeAtiva].config,
+          numeroOperadores: sugerido,
+        },
+      },
+    }));
+  }, [config.possibilidade, config.numeroOperadores, operadores.length, operadoresSelecionados.length, unidadeAtiva]);
 
   // Sincroniza operadores com a ficha tecnica activa (quando muda de ficha/operacoes)
   useEffect(() => {
@@ -1247,7 +1284,7 @@ export default function Home() {
         operadoresSelecionados.includes(op.id)
       );
 
-      if (!usarAllocateModo1Api && config.possibilidade !== 4 && operadoresDisponiveis.length === 0) {
+      if (!usarAllocateModo1Api && !usarAllocateObjetivoApi && !usarAllocateNumeroOperadoresApi && config.possibilidade !== 4 && operadoresDisponiveis.length === 0) {
         alert("Por favor, selecione pelo menos um operador.");
         return;
       }
@@ -1403,6 +1440,331 @@ export default function Home() {
         const dataToPass = {
           resultados: resultadosApi,
           operadores: operadoresDisponiveis,
+          operacoes,
+          config,
+          layoutConfig,
+        };
+
+        sessionStorage.setItem("balanceamentoData", JSON.stringify(dataToPass));
+        navigate("/resultados", { state: dataToPass });
+        return;
+      }
+      // Modo 2: usar endpoint por quantidade objetivo
+      if (usarAllocateObjetivoApi) {
+        if (!taskCodeSelecionado) {
+          alert("Nao foi possivel identificar o codigo da ficha tecnica para calcular.");
+          return;
+        }
+
+        const quantidadeObjetivo = Number(quantidadeObjetivoInput || config.quantidadeObjetivo || 0);
+        if (!Number.isFinite(quantidadeObjetivo) || quantidadeObjetivo <= 0) {
+          alert("Defina uma quantidade objetivo valida.");
+          return;
+        }
+
+        const normalizarRatio = (valor: number) => {
+          if (!Number.isFinite(valor)) return 0;
+          return valor > 1 ? valor / 100 : valor;
+        };
+        const limitNotDivideUpper = Math.max(1.01, Number(config.naoDividirMaiorQue) || 1.1);
+        const limitNotDivideLower = Math.min(0.99, Math.max(0, Number(config.naoDividirMenorQue) || 0.9));
+        const postosPorLado = Math.max(1, Math.trunc(Number(layoutConfig.postosPorLado) || 0));
+        const maxPosts = layoutConfig.tipoLayout === "espinha" ? postosPorLado * 2 : postosPorLado;
+
+        const payloadBase = {
+          efficiency: normalizarRatio(config.produtividadeEstimada),
+          work_hours: config.horasTurno,
+          limit_not_assign: normalizarRatio(config.cargaMaximaOperador),
+          limit_not_divide_upper: limitNotDivideUpper,
+          limit_not_divide_lower: limitNotDivideLower,
+          line_type: layoutConfig.tipoLayout,
+          max_posts: maxPosts,
+          objective_pieces: quantidadeObjetivo,
+        };
+        const payload = config.agruparMaquinas
+          ? {
+              ...payloadBase,
+              max_position_deviation: Math.max(1, Number(layoutConfig.distanciaMaxima) || 1),
+              position_deviation_mode: layoutConfig.permitirRetrocesso ? "both" : "forward",
+            }
+          : payloadBase;
+        const endpointModo2 = config.agruparMaquinas
+          ? "allocate-grouped-objective"
+          : "allocate-objective";
+
+        const resposta = await axios.post(
+          `${API_BASE_URL}/tasks/${encodeURIComponent(taskCodeSelecionado)}/${endpointModo2}`,
+          payload
+        );
+        const r = ensureRecord(resposta.data) ?? {};
+
+        const taktTime = (pickNumber(r, ["takt_time_seconds", "takt_time", "taktTime"]) ?? 0) / 60;
+        const tempoCicloApi = pickNumber(r, ["real_cycle_time_seconds", "cycle_time_seconds", "cycle_time", "tempo_ciclo_segundos"]);
+        const tempoCiclo = tempoCicloApi != null
+          ? (tempoCicloApi > 10 ? tempoCicloApi / 60 : tempoCicloApi)
+          : 0;
+        const numeroCiclosPorHora = pickNumber(r, ["production_per_hour", "numero_ciclos_por_hora"]) ?? (tempoCiclo > 0 ? 60 / tempoCiclo : 0);
+        const produtividadeRaw = pickNumber(r, ["estimated_productivity", "productivity", "produtividade_estimada"]) ?? 0;
+        const produtividade = produtividadeRaw <= 1 ? produtividadeRaw * 100 : produtividadeRaw;
+        const perdas = Math.max(0, 100 - produtividade);
+
+        const assignments = ensureArray(
+          r.assignments ??
+          r.allocations ??
+          r.operator_allocations ??
+          r.operator_assignments ??
+          r.distribution ??
+          r.distribuicao
+        );
+        const operationAllocations = ensureArray(
+          r.operation_allocations ??
+          r.operationAllocations
+        );
+
+        let distribuicao = extrairDistribuicaoDeTableData(r, operacoes, tempoCiclo, operadores);
+        if (distribuicao.length === 0 && operationAllocations.length > 0) {
+          distribuicao = extrairDistribuicaoDeOperationAllocations(operationAllocations, operacoes, operadores, tempoCiclo);
+        }
+        const mapa: Record<string, { operacoes: Set<string>; tempoTotal: number; temposOperacoes: Record<string, number> }> = {};
+
+        if (distribuicao.length === 0) {
+          for (const item of assignments) {
+            const operadorRef = pickString(item, ["operator_id", "operador_id", "operator", "operador"]);
+            if (!operadorRef) continue;
+            const operadorId = mapOperatorToCode(operadorRef, operadores);
+
+            const operacaoRef =
+              pickString(item, ["operation_code", "operation_id", "operacao_id", "operation", "operacao"]) ||
+              pickString(item, ["operation_name", "operacao_nome", "name", "nome"]);
+            const operacaoId = operacaoRef ? findOperacaoIdByReferencia(operacaoRef, operacoes) || operacaoRef : "";
+
+            const tempoSegundos = pickNumber(item, ["time_seconds", "tempo_segundos", "seconds"]);
+            const tempoMinutos = tempoSegundos != null
+              ? tempoSegundos / 60
+              : (pickNumber(item, ["time_min", "time_minutes", "tempo_minutos", "minutes"]) ?? 0);
+
+            if (!mapa[operadorId]) mapa[operadorId] = { operacoes: new Set(), tempoTotal: 0, temposOperacoes: {} };
+            if (operacaoId) mapa[operadorId].operacoes.add(operacaoId);
+            mapa[operadorId].tempoTotal += tempoMinutos;
+            if (operacaoId) {
+              mapa[operadorId].temposOperacoes[operacaoId] = (mapa[operadorId].temposOperacoes[operacaoId] || 0) + tempoMinutos;
+            }
+          }
+        } else {
+          for (const dist of distribuicao) {
+            mapa[dist.operadorId] = {
+              operacoes: new Set(dist.operacoes),
+              tempoTotal: dist.cargaHoraria,
+              temposOperacoes: { ...(dist.temposOperacoes || {}) },
+            };
+          }
+        }
+
+        let numeroOperadores =
+          pickNumber(r, ["num_operators", "numero_operadores", "numeroOperadores"]) ??
+          Object.keys(mapa).length;
+
+        if (Object.keys(mapa).length === 0 && numeroOperadores > 0) {
+          for (let i = 1; i <= numeroOperadores; i++) {
+            const operadorId = `OP${String(i).padStart(2, "0")}`;
+            mapa[operadorId] = { operacoes: new Set(), tempoTotal: 0, temposOperacoes: {} };
+          }
+        }
+
+        if (distribuicao.length === 0) {
+          distribuicao = Object.entries(mapa).map(([operadorId, dados]) => ({
+            operadorId,
+            operacoes: Array.from(dados.operacoes),
+            cargaHoraria: dados.tempoTotal,
+            ocupacao: tempoCiclo > 0 ? (dados.tempoTotal / tempoCiclo) * 100 : 0,
+            ciclosPorHora: dados.tempoTotal > 0 ? 60 / dados.tempoTotal : 0,
+            temposOperacoes: dados.temposOperacoes,
+          }));
+        }
+
+        if (!numeroOperadores) numeroOperadores = distribuicao.length;
+        const ocupacaoTotal =
+          pickNumber(r, ["occupancy_total", "ocupacao_total", "total_occupancy", "total_load"]) ??
+          distribuicao.reduce((sum, dist) => sum + dist.cargaHoraria * 60, 0);
+
+        const resultadosApi = {
+          distribuicao,
+          operation_allocations: operationAllocations,
+          taktTime,
+          tempoCiclo,
+          numeroCiclosPorHora,
+          produtividade,
+          perdas,
+          numeroOperadores,
+          ocupacaoTotal,
+        };
+
+        const dataToPass = {
+          resultados: resultadosApi,
+          operadores,
+          operacoes,
+          config,
+          layoutConfig,
+        };
+
+        sessionStorage.setItem("balanceamentoData", JSON.stringify(dataToPass));
+        navigate("/resultados", { state: dataToPass });
+        return;
+      }
+      // Modo 3: usar endpoint por numero de operadores
+      if (usarAllocateNumeroOperadoresApi) {
+        if (!taskCodeSelecionado) {
+          alert("Nao foi possivel identificar o codigo da ficha tecnica para calcular.");
+          return;
+        }
+
+        const numeroOperadoresEfetivo = Number(numeroOperadoresInput || config.numeroOperadores || operadoresSelecionados.length || 0);
+        const numeroOperadoresPedido = Math.max(1, Math.trunc(numeroOperadoresEfetivo));
+        if (!Number.isFinite(numeroOperadoresPedido) || numeroOperadoresPedido <= 0) {
+          alert("Defina um numero de operadores valido.");
+          return;
+        }
+
+        const normalizarRatio = (valor: number) => {
+          if (!Number.isFinite(valor)) return 0;
+          return valor > 1 ? valor / 100 : valor;
+        };
+        const limitNotDivideUpper = Math.max(1.01, Number(config.naoDividirMaiorQue) || 1.1);
+        const limitNotDivideLower = Math.min(0.99, Math.max(0, Number(config.naoDividirMenorQue) || 0.9));
+        const postosPorLado = Math.max(1, Math.trunc(Number(layoutConfig.postosPorLado) || 0));
+        const maxPosts = layoutConfig.tipoLayout === "espinha" ? postosPorLado * 2 : postosPorLado;
+
+        const payloadBase = {
+          efficiency: normalizarRatio(config.produtividadeEstimada),
+          work_hours: config.horasTurno,
+          limit_not_assign: normalizarRatio(config.cargaMaximaOperador),
+          limit_not_divide_upper: limitNotDivideUpper,
+          limit_not_divide_lower: limitNotDivideLower,
+          line_type: layoutConfig.tipoLayout,
+          max_posts: maxPosts,
+          num_operators: numeroOperadoresPedido,
+        };
+        const payload = config.agruparMaquinas
+          ? {
+              ...payloadBase,
+              max_position_deviation: Math.max(1, Number(layoutConfig.distanciaMaxima) || 1),
+              position_deviation_mode: layoutConfig.permitirRetrocesso ? "both" : "forward",
+            }
+          : payloadBase;
+        const endpointModo3 = config.agruparMaquinas
+          ? "allocate-grouped-manual"
+          : "allocate-manual";
+
+        const resposta = await axios.post(
+          `${API_BASE_URL}/tasks/${encodeURIComponent(taskCodeSelecionado)}/${endpointModo3}`,
+          payload
+        );
+        const r = ensureRecord(resposta.data) ?? {};
+
+        const taktTime = (pickNumber(r, ["takt_time_seconds", "takt_time", "taktTime"]) ?? 0) / 60;
+        const tempoCicloApi = pickNumber(r, ["real_cycle_time_seconds", "cycle_time_seconds", "cycle_time", "tempo_ciclo_segundos"]);
+        const tempoCiclo = tempoCicloApi != null
+          ? (tempoCicloApi > 10 ? tempoCicloApi / 60 : tempoCicloApi)
+          : 0;
+        const numeroCiclosPorHora = pickNumber(r, ["production_per_hour", "numero_ciclos_por_hora"]) ?? (tempoCiclo > 0 ? 60 / tempoCiclo : 0);
+        const produtividadeRaw = pickNumber(r, ["estimated_productivity", "productivity", "produtividade_estimada"]) ?? 0;
+        const produtividade = produtividadeRaw <= 1 ? produtividadeRaw * 100 : produtividadeRaw;
+        const perdas = Math.max(0, 100 - produtividade);
+
+        const assignments = ensureArray(
+          r.assignments ??
+          r.allocations ??
+          r.operator_allocations ??
+          r.operator_assignments ??
+          r.distribution ??
+          r.distribuicao
+        );
+        const operationAllocations = ensureArray(
+          r.operation_allocations ??
+          r.operationAllocations
+        );
+
+        let distribuicao = extrairDistribuicaoDeTableData(r, operacoes, tempoCiclo, operadores);
+        if (distribuicao.length === 0 && operationAllocations.length > 0) {
+          distribuicao = extrairDistribuicaoDeOperationAllocations(operationAllocations, operacoes, operadores, tempoCiclo);
+        }
+        const mapa: Record<string, { operacoes: Set<string>; tempoTotal: number; temposOperacoes: Record<string, number> }> = {};
+
+        if (distribuicao.length === 0) {
+          for (const item of assignments) {
+            const operadorRef = pickString(item, ["operator_id", "operador_id", "operator", "operador"]);
+            if (!operadorRef) continue;
+            const operadorId = mapOperatorToCode(operadorRef, operadores);
+
+            const operacaoRef =
+              pickString(item, ["operation_code", "operation_id", "operacao_id", "operation", "operacao"]) ||
+              pickString(item, ["operation_name", "operacao_nome", "name", "nome"]);
+            const operacaoId = operacaoRef ? findOperacaoIdByReferencia(operacaoRef, operacoes) || operacaoRef : "";
+
+            const tempoSegundos = pickNumber(item, ["time_seconds", "tempo_segundos", "seconds"]);
+            const tempoMinutos = tempoSegundos != null
+              ? tempoSegundos / 60
+              : (pickNumber(item, ["time_min", "time_minutes", "tempo_minutos", "minutes"]) ?? 0);
+
+            if (!mapa[operadorId]) mapa[operadorId] = { operacoes: new Set(), tempoTotal: 0, temposOperacoes: {} };
+            if (operacaoId) mapa[operadorId].operacoes.add(operacaoId);
+            mapa[operadorId].tempoTotal += tempoMinutos;
+            if (operacaoId) {
+              mapa[operadorId].temposOperacoes[operacaoId] = (mapa[operadorId].temposOperacoes[operacaoId] || 0) + tempoMinutos;
+            }
+          }
+        } else {
+          for (const dist of distribuicao) {
+            mapa[dist.operadorId] = {
+              operacoes: new Set(dist.operacoes),
+              tempoTotal: dist.cargaHoraria,
+              temposOperacoes: { ...(dist.temposOperacoes || {}) },
+            };
+          }
+        }
+
+        let numeroOperadores =
+          pickNumber(r, ["num_operators", "numero_operadores", "numeroOperadores"]) ??
+          Object.keys(mapa).length;
+
+        if (Object.keys(mapa).length === 0 && numeroOperadores > 0) {
+          for (let i = 1; i <= numeroOperadores; i++) {
+            const operadorId = `OP${String(i).padStart(2, "0")}`;
+            mapa[operadorId] = { operacoes: new Set(), tempoTotal: 0, temposOperacoes: {} };
+          }
+        }
+
+        if (distribuicao.length === 0) {
+          distribuicao = Object.entries(mapa).map(([operadorId, dados]) => ({
+            operadorId,
+            operacoes: Array.from(dados.operacoes),
+            cargaHoraria: dados.tempoTotal,
+            ocupacao: tempoCiclo > 0 ? (dados.tempoTotal / tempoCiclo) * 100 : 0,
+            ciclosPorHora: dados.tempoTotal > 0 ? 60 / dados.tempoTotal : 0,
+            temposOperacoes: dados.temposOperacoes,
+          }));
+        }
+
+        if (!numeroOperadores) numeroOperadores = distribuicao.length;
+        const ocupacaoTotal =
+          pickNumber(r, ["occupancy_total", "ocupacao_total", "total_occupancy", "total_load"]) ??
+          distribuicao.reduce((sum, dist) => sum + dist.cargaHoraria * 60, 0);
+
+        const resultadosApi = {
+          distribuicao,
+          operation_allocations: operationAllocations,
+          taktTime,
+          tempoCiclo,
+          numeroCiclosPorHora,
+          produtividade,
+          perdas,
+          numeroOperadores,
+          ocupacaoTotal,
+        };
+
+        const dataToPass = {
+          resultados: resultadosApi,
+          operadores,
           operacoes,
           config,
           layoutConfig,
@@ -1845,14 +2207,19 @@ export default function Home() {
                         <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Objetivo (pecas/dia)</span>
                       </div>
                       <input
-                        type="number" min={1}
-                        value={config.quantidadeObjetivo || ""}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={quantidadeObjetivoInput}
                         onChange={(e) => {
-                          const quantidade = e.currentTarget.valueAsNumber;
-                          if (!Number.isFinite(quantidade)) {
+                          const raw = e.currentTarget.value.replace(/[^\d]/g, "");
+                          setQuantidadeObjetivoInput(raw);
+                          if (!raw) {
                             handleConfigChange({ ...config, quantidadeObjetivo: undefined });
                             return;
                           }
+                          const quantidade = Number(raw);
+                          if (!Number.isFinite(quantidade)) return;
                           handleConfigChange({ ...config, quantidadeObjetivo: quantidade });
                           if (quantidade > 0) handleCalcularOperadoresNecessarios(quantidade);
                         }}
@@ -1885,10 +2252,15 @@ export default function Home() {
                         <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Numero de Operadores</span>
                       </div>
                       <input
-                        type="number" min={1} max={operadores.length}
-                        value={config.numeroOperadores || operadoresSelecionados.length}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={numeroOperadoresInput}
                         onChange={(e) => {
-                          const typed = e.currentTarget.valueAsNumber;
+                          const raw = e.currentTarget.value.replace(/[^\d]/g, "");
+                          setNumeroOperadoresInput(raw);
+                          if (!raw) return;
+                          const typed = Number(raw);
                           if (!Number.isFinite(typed)) return;
                           const num = Math.max(1, Math.min(typed, operadores.length));
                           handleConfigChange({ ...config, numeroOperadores: num });
