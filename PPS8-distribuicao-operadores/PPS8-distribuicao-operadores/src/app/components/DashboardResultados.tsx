@@ -72,11 +72,21 @@ function buildDisplayCodeMap(distribuicao: DistribuicaoCarga[]): Map<string, str
 }
 
 function getBatteryColor(ocupacao: number): string {
-  if (ocupacao > 100) return "#F97316";
+  if (ocupacao > 100) return "#DC2626";
   if (ocupacao >= 90) return "#10B981";
   if (ocupacao >= 80) return "#FBBF24";
   if (ocupacao >= 70) return "#F59E0B";
   return "#F97316";
+}
+
+function getCollaboratorLabel(rawOperatorId: string, fallbackCode: string): string {
+  const rawDigits = (String(rawOperatorId || "").match(/\d+/g) || []).join("");
+  if (rawDigits) return String(Number(rawDigits));
+
+  const codeDigits = (String(fallbackCode || "").match(/\d+/g) || []).join("");
+  if (codeDigits) return String(Number(codeDigits));
+
+  return fallbackCode || rawOperatorId;
 }
 
 function generateFillPath(height: number): string {
@@ -98,10 +108,12 @@ export function DashboardResultados({
     const codigo =
       displayCodeByOperatorId.get(String(dist?.operadorId || "").trim()) ||
       resolveOperatorCode(dist.operadorId, operadores);
+    const colaboradorLabel = getCollaboratorLabel(dist.operadorId, codigo);
 
     return {
       idx: `op_${index}`,
       codigo,
+      colaboradorLabel,
       ocupacao: Math.round(dist.ocupacao),
       cargaHoraria: Math.round(dist.cargaHoraria),
     };
@@ -131,7 +143,7 @@ export function DashboardResultados({
         <div className="content-stretch flex gap-[8px] items-start overflow-x-auto px-[40px] relative shrink-0 w-fit">
           {dadosCarga.map((d) => {
             const totalTimeSeconds = d.cargaHoraria * 60;
-            const fillHeight = (Math.min(d.ocupacao, 105) / 100) * BATTERY_TOTAL_HEIGHT;
+            const fillHeight = (Math.min(d.ocupacao, 100) / 100) * BATTERY_TOTAL_HEIGHT;
             const fillMT = BATTERY_START_MT + (BATTERY_TOTAL_HEIGHT - fillHeight);
             const color = getBatteryColor(d.ocupacao);
             const fillPath = generateFillPath(fillHeight);
@@ -188,7 +200,7 @@ export function DashboardResultados({
                   <div className="flex flex-col items-center justify-center size-full">
                     <div className="content-stretch flex flex-col gap-[8px] items-center justify-center p-[2px] relative w-full">
                       <p title={d.codigo} className="font-normal leading-[normal] not-italic relative shrink-0 text-[#6b7280] text-[9.818px] text-center whitespace-nowrap cursor-help">
-                        {d.codigo}
+                        {d.colaboradorLabel}
                       </p>
                       <div className="content-stretch flex gap-[8px] h-[14px] items-center justify-center relative shrink-0 w-[59px]">
                         <p className="font-bold leading-[normal] not-italic relative shrink-0 text-[#6b7280] text-[9.818px] text-center whitespace-nowrap">{totalTimeSeconds.toFixed(0)}s</p>
