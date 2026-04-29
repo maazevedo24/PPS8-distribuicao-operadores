@@ -317,6 +317,141 @@ const mapOperationCandidatesToManual = (
   return mapped;
 };
 
+const candidatePoolsArrayToObject = (
+  rows: unknown[],
+  operacoes: Operacao[]
+): Record<string, unknown> | null => {
+  const mapped: Record<string, unknown> = {};
+
+  rows.forEach((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return;
+    const record = row as ApiRecord;
+    const operationKey =
+      pickString(record, [
+        "operation_code",
+        "operation_id",
+        "op_code",
+        "op_id",
+        "operation",
+        "op",
+        "code",
+        "id",
+      ]) || "";
+    if (!operationKey) return;
+
+    const operacaoId = resolveOperationIdFromKey(operationKey, operacoes);
+    if (!operacaoId) return;
+
+    const operatorIds = parseAssignedOperatorIds(
+      record.collaborator_ids ??
+        record.collaborators ??
+        record.colaboradores ??
+        record.operator_ids ??
+        record.operators ??
+        record.operadores ??
+        record.collaborator_id ??
+        record.operator_id ??
+        record.operator ??
+        record.operador
+    );
+    if (operatorIds.length === 0) return;
+
+    mapped[operacaoId] = Array.from(new Set(operatorIds));
+  });
+
+  return Object.keys(mapped).length > 0 ? mapped : null;
+};
+
+const coerceCandidatePoolsObject = (
+  value: unknown,
+  operacoes: Operacao[]
+): Record<string, unknown> | null => {
+  if (!value) return null;
+  if (Array.isArray(value)) return candidatePoolsArrayToObject(value, operacoes);
+  if (typeof value === "object") return value as Record<string, unknown>;
+  return null;
+};
+
+const getOperationCandidatesCoverage = (
+  operationCandidates: Record<string, unknown>,
+  operacoes: Operacao[]
+): number => Object.keys(mapOperationCandidatesToManual(operationCandidates, operacoes)).length;
+
+const extractCandidatePoolsForProduto = (
+  responseRecord: Record<string, unknown>,
+  produtoAlvo: Produto
+): Record<string, unknown> | null => {
+  const pickedTaskIds = Array.from(
+    new Set([produtoAlvo.id, produtoAlvo.referencia].map((value) => value?.trim()).filter(Boolean))
+  ) as string[];
+  const normalizedTaskIds = new Set(pickedTaskIds.map((value) => normalizeToken(value)));
+
+  const seen = new Set<object>();
+  const queue: Record<string, unknown>[] = [responseRecord];
+  let bestCandidate: Record<string, unknown> | null = null;
+  let bestCoverage = 0;
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || seen.has(current)) continue;
+    seen.add(current);
+
+    const nestedPools =
+      current.candidate_pools ??
+      current.candidatePools ??
+      current.pools ??
+      current.operation_candidates ??
+      current.operationCandidates ??
+      null;
+
+    const coercedNestedPools = coerceCandidatePoolsObject(nestedPools, produtoAlvo.operacoes);
+    if (coercedNestedPools) {
+      queue.push(coercedNestedPools);
+    }
+
+    const currentTaskId = pickString(current, ["task_id", "taskId", "task_code", "taskCode", "reference"]);
+    const currentCoverage = getOperationCandidatesCoverage(current, produtoAlvo.operacoes);
+    if (
+      currentCoverage > 0 &&
+      (bestCandidate === null ||
+        currentCoverage > bestCoverage ||
+        (currentTaskId && normalizedTaskIds.has(normalizeToken(currentTaskId))))
+    ) {
+      bestCandidate = current;
+      bestCoverage = currentCoverage;
+    }
+
+    Object.entries(current).forEach(([key, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return;
+
+      const nested = value as Record<string, unknown>;
+      const nestedTaskId = pickString(nested, ["task_id", "taskId", "task_code", "taskCode", "reference"]);
+      if (nestedTaskId && normalizedTaskIds.has(normalizeToken(nestedTaskId))) {
+        queue.push(nested);
+        return;
+      }
+
+      if (normalizedTaskIds.has(normalizeToken(key))) {
+        queue.push(nested);
+        return;
+      }
+
+      if (nested.candidate_pools || nested.candidatePools || nested.pools) {
+        queue.push(nested);
+        return;
+      }
+
+      const nestedCoverage = getOperationCandidatesCoverage(nested, produtoAlvo.operacoes);
+      if (nestedCoverage > 0) {
+        queue.push(nested);
+      }
+    });
+  }
+
+  if (bestCandidate && bestCoverage > 0) return bestCandidate;
+  return null;
+};
+
 const canonicalizeOperatorIds = (operatorIds: string[], operadoresCatalogo: Operador[]): string[] => {
   if (operadoresCatalogo.length === 0) return operatorIds;
   const byNormalized = new Map(
@@ -480,13 +615,11 @@ export default function FichaTecnica() {
         );
 
         setProdutos(fichas);
-        let proximoSelecionado: string | null = null;
-        setProdutoSelecionado((anterior) => {
-          proximoSelecionado = fichas.some((ficha) => ficha.id === anterior)
-            ? anterior
-            : fichas[0]?.id || null;
-          return proximoSelecionado;
-        });
+        const selecionadoAnterior = produtoSelecionadoRef.current;
+        const proximoSelecionado = fichas.some((ficha) => ficha.id === selecionadoAnterior)
+          ? selecionadoAnterior
+          : fichas[0]?.id || null;
+        setProdutoSelecionado(proximoSelecionado);
 
         if (proximoSelecionado) {
           produtoSelecionadoRef.current = proximoSelecionado;
@@ -527,24 +660,16 @@ export default function FichaTecnica() {
           `${API_BASE_URL}/technical-sheets/${encodeURIComponent(taskId)}/candidate-pools`
         );
         const responseData = resposta.data;
-        if (!responseData || typeof responseData !== "object" || Array.isArray(responseData)) {
+        if (!responseData || typeof responseData !== "object") {
           continue;
         }
 
-        const responseRecord = responseData as Record<string, unknown>;
-        const candidate =
-          responseRecord.candidate_pools ??
-          responseRecord.candidatePools ??
-          responseRecord.pools ??
-          (Object.keys(responseRecord).some((key) => key !== "task_id")
-            ? Object.fromEntries(
-                Object.entries(responseRecord).filter(([key, value]) => key !== "task_id" && value != null)
-              )
-            : null) ??
-          null;
+        const responseRecord = coerceCandidatePoolsObject(responseData, produtoAlvo.operacoes);
+        if (!responseRecord) continue;
 
-        if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
-          candidatePools = candidate as Record<string, unknown>;
+        const candidate = extractCandidatePoolsForProduto(responseRecord, produtoAlvo);
+        if (candidate) {
+          candidatePools = candidate;
           break;
         }
       } catch {
