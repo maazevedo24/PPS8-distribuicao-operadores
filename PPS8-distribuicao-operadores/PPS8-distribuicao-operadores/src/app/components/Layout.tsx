@@ -1,4 +1,4 @@
-import { Outlet, useNavigate, useLocation } from "react-router";
+﻿import { Outlet, useNavigate, useLocation } from "react-router";
 import {
   Calculator, Settings, FileText, BarChart3,
   FilePlus, FolderOpen, CheckCircle2, AlertCircle,
@@ -168,15 +168,6 @@ export default function Layout() {
     if (path === "/") return location.pathname === "/";
     return location.pathname.startsWith(path);
   };
-
-  const handleConectar = () => {
-    if (estadoConexao === "pede-permissao") {
-      reconectar();
-    } else {
-      setMostrarModal(true);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
@@ -205,7 +196,7 @@ export default function Layout() {
                     <button
                       key={item.path}
                       onClick={() => navigate(item.path)}
-                      className={`px-4 py-2 text-sm font-medium rounded-sm flex items-center gap-2 transition-colors ${
+                      className={`px-4 py-2 text-sm font-medium rounded-sm flex items-center gap-2 transition-colors cursor-pointer ${
                         active
                           ? "text-white bg-[#3d3d3d]"
                           : "text-gray-400 hover:text-white hover:bg-[#3d3d3d]/50"
@@ -217,9 +208,6 @@ export default function Layout() {
                   );
                 })}
               </nav>
-
-              {/* Separador */}
-              <div className="w-px h-5 bg-gray-600" />
 
               {/* Estado do ficheiro */}
               <FileStatusBadge
@@ -233,7 +221,7 @@ export default function Layout() {
                 <button
                   onClick={desconectar}
                   title="Desligar ficheiro de sessão"
-                  className="p-1.5 rounded-sm text-gray-600 hover:text-gray-400 hover:bg-[#3d3d3d]/50 transition-colors"
+                  className="p-1.5 rounded-sm text-gray-600 hover:text-gray-400 hover:bg-[#3d3d3d]/50 transition-colors cursor-pointer"
                 >
                   <Link2Off className="w-3.5 h-3.5" />
                 </button>
@@ -241,19 +229,10 @@ export default function Layout() {
                 <button
                   onClick={reconectar}
                   title="Reconectar ao ficheiro (permissão necessária)"
-                  className="flex items-center gap-1 px-2 py-1 rounded-sm text-amber-400 hover:bg-amber-900/30 text-xs transition-colors border border-amber-700/50"
+                  className="flex items-center gap-1 px-2 py-1 rounded-sm text-amber-400 hover:bg-amber-900/30 text-xs transition-colors border border-amber-700/50 cursor-pointer"
                 >
                   <Link2 className="w-3 h-3" />
                   Reconectar
-                </button>
-              ) : estadoConexao !== "a-carregar" && estadoConexao !== "sem-suporte" ? (
-                <button
-                  onClick={handleConectar}
-                  title="Ligar ficheiro de sessão"
-                  className="flex items-center gap-1 px-2 py-1 rounded-sm text-gray-400 hover:text-white hover:bg-[#3d3d3d]/50 text-xs transition-colors"
-                >
-                  <Link2 className="w-3 h-3" />
-                  Ligar ficheiro
                 </button>
               ) : null}
             </div>
@@ -306,3 +285,6 @@ export default function Layout() {
     </div>
   );
 }
+
+
+

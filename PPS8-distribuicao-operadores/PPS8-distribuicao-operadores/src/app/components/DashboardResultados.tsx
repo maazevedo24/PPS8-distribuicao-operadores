@@ -9,6 +9,9 @@ interface DashboardResultadosProps {
   config: ConfiguracaoDistribuicao;
   onRecalcular: (novosResultados: ResultadosBalanceamento, novaConfig: ConfiguracaoDistribuicao) => void;
   onDistribuicaoChange?: (novaDistribuicao: DistribuicaoCarga[]) => void;
+  viewMode?: "tempo" | "percentagem";
+  onConfirmarEdicao?: (editedRows: any[]) => Promise<void>;
+  isAjustando?: boolean;
 }
 
 function normalizeKey(value: string): string {
@@ -102,6 +105,9 @@ export function DashboardResultados({
   operadores,
   operacoes,
   onDistribuicaoChange,
+  viewMode = "tempo",
+  onConfirmarEdicao,
+  isAjustando = false,
 }: DashboardResultadosProps) {
   const displayCodeByOperatorId = buildDisplayCodeMap(resultados.distribuicao || []);
   const dadosCarga = resultados.distribuicao.map((dist, index) => {
@@ -246,8 +252,11 @@ export function DashboardResultados({
           resultados={resultados}
           operadores={operadores}
           operacoes={operacoes}
+          viewMode={viewMode}
           unidadeTempo="s"
           onDistribuicaoChange={onDistribuicaoChange}
+          onConfirmarEdicao={onConfirmarEdicao}
+          isAjustando={isAjustando}
         />
       </div>
     </div>

@@ -151,7 +151,7 @@ export function ConfiguracaoDistribuicaoComponent({
 
             <div className="flex items-center justify-between p-4 border border-gray-200 rounded-sm">
               <div className="flex-1">
-                <Label htmlFor="agrupar" className="font-medium text-gray-900 text-sm">
+                <Label htmlFor="agrupar" className="font-medium text-gray-900 text-sm cursor-pointer">
                   Agrupar por Tipo de Maquina
                 </Label>
                 <p className="text-xs text-gray-500 mt-1">
@@ -162,6 +162,7 @@ export function ConfiguracaoDistribuicaoComponent({
                 id="agrupar"
                 checked={config.agruparMaquinas}
                 onCheckedChange={(checked) => onChange({ ...config, agruparMaquinas: checked })}
+                className="cursor-pointer"
               />
             </div>
 

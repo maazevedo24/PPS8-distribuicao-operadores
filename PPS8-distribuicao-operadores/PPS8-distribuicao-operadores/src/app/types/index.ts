@@ -127,6 +127,7 @@ export interface OperationAllocation {
   is_split?: boolean;
   balance_loss?: boolean;
   operator_allocations?: any[];
+  occupancy_percentages?: Record<string, number>;
   operator_times?: Record<string, number>;
   operator_positions?: Record<string, OperationAllocationOperatorPosition>;
 }

@@ -5,7 +5,6 @@ import { Button } from "../components/ui/button";
 import { Calculator, Users, Package, Factory, ChevronDown, Edit3, AlertTriangle } from "lucide-react";
 import { ConfiguracaoDistribuicaoComponent } from "../components/ConfiguracaoDistribuicao";
 import { LayoutConfigurador, LayoutConfig } from "../components/LayoutConfigurador";
-import { OperadorSelector } from "../components/OperadorSelector";
 import { TabelaOperacoesManual } from "../components/TabelaOperacoesManual";
 import { calcularBalanceamento } from "../utils/balanceamento";
 import { salvarHistorico, obterHistorico } from "../utils/historico";
@@ -66,6 +65,11 @@ type DistItem = {
   ocupacao: number;
   ciclosPorHora: number;
   temposOperacoes?: Record<string, number>;
+};
+
+type PolyvalenceCapability = {
+  operatorId: string;
+  ole: number;
 };
 
 const ensureArray = (value: unknown): ApiRecord[] => {
@@ -823,6 +827,212 @@ const mapApiTaskToProduto = (raw: ApiRecord, index: number, familyId: string): P
   };
 };
 
+const normalizeToken = (value: string): string => value.trim().toUpperCase();
+
+const normalizeNumericToken = (value: string): string => {
+  const sanitized = value.trim().replace(/[^\d-]/g, "");
+  if (!sanitized) return "";
+  const parsed = Number(sanitized);
+  return Number.isFinite(parsed) ? String(parsed) : "";
+};
+
+const parseAssignedOperatorIds = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((entry) => parseAssignedOperatorIds(entry))
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parseAssignedOperatorIds(parsed);
+      } catch {
+        // fallback
+      }
+    }
+    if (trimmed.includes(",") || trimmed.includes(";")) {
+      return trimmed
+        .split(/[;,]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    }
+    return [trimmed];
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) return [String(value)];
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const nestedCandidates = [
+      record.collaborator_ids,
+      record.collaborators,
+      record.colaboradores,
+      record.operator_ids,
+      record.operators,
+      record.operadores,
+      record.collaborator_id,
+      record.operator_id,
+      record.operator,
+      record.operador,
+      record.id,
+      record.code,
+    ];
+    for (const candidate of nestedCandidates) {
+      const parsed = parseAssignedOperatorIds(candidate);
+      if (parsed.length > 0) return parsed;
+    }
+  }
+
+  return [];
+};
+
+const resolveOperationIdFromKey = (operationKey: string, operacoes: Operacao[]): string | null => {
+  const keyToken = normalizeToken(operationKey);
+  const keyNumeric = normalizeNumericToken(operationKey);
+  const keyAsNumber = Number(operationKey);
+
+  const byId = operacoes.find((operacao) => normalizeToken(operacao.id) === keyToken);
+  if (byId) return byId.id;
+
+  if (keyNumeric) {
+    const byIdNumeric = operacoes.find(
+      (operacao) => normalizeNumericToken(operacao.id) === keyNumeric
+    );
+    if (byIdNumeric) return byIdNumeric.id;
+  }
+
+  if (Number.isFinite(keyAsNumber)) {
+    const bySequence = operacoes.find((operacao) => operacao.sequencia === keyAsNumber);
+    if (bySequence) return bySequence.id;
+  }
+
+  return null;
+};
+
+const mapOperationCandidatesToManual = (
+  operationCandidates: Record<string, unknown>,
+  operacoes: Operacao[]
+): { [operacaoId: string]: string[] } => {
+  const mapped: { [operacaoId: string]: string[] } = {};
+
+  Object.entries(operationCandidates).forEach(([operationKey, operationValue]) => {
+    const operacaoId = resolveOperationIdFromKey(operationKey, operacoes);
+    if (!operacaoId) return;
+
+    const operadoresIds = Array.from(new Set(parseAssignedOperatorIds(operationValue)));
+    if (operadoresIds.length === 0) return;
+    mapped[operacaoId] = operadoresIds;
+  });
+
+  return mapped;
+};
+
+const candidatePoolsArrayToObject = (
+  rows: unknown[],
+  operacoes: Operacao[]
+): Record<string, unknown> | null => {
+  const mapped: Record<string, unknown> = {};
+
+  rows.forEach((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return;
+    const record = row as ApiRecord;
+    const operationKey =
+      pickString(record, [
+        "operation_code",
+        "operation_id",
+        "op_code",
+        "op_id",
+        "operation",
+        "op",
+        "code",
+        "id",
+      ]) || "";
+    if (!operationKey) return;
+
+    const operacaoId = resolveOperationIdFromKey(operationKey, operacoes);
+    if (!operacaoId) return;
+
+    const operatorIds = parseAssignedOperatorIds(
+      record.collaborator_ids ??
+        record.collaborators ??
+        record.colaboradores ??
+        record.operator_ids ??
+        record.operators ??
+        record.operadores ??
+        record.collaborator_id ??
+        record.operator_id ??
+        record.operator ??
+        record.operador
+    );
+
+    if (operatorIds.length === 0) return;
+    mapped[operacaoId] = Array.from(new Set(operatorIds));
+  });
+
+  return Object.keys(mapped).length > 0 ? mapped : null;
+};
+
+const coerceCandidatePoolsObject = (
+  value: unknown,
+  operacoes: Operacao[]
+): Record<string, unknown> | null => {
+  if (!value) return null;
+  if (Array.isArray(value)) return candidatePoolsArrayToObject(value, operacoes);
+  if (typeof value === "object") return value as Record<string, unknown>;
+  return null;
+};
+
+const extractCandidatePoolsForProduto = (
+  responseRecord: Record<string, unknown>,
+  produtoAlvo: Produto
+): Record<string, unknown> | null => {
+  const pickedTaskIds = Array.from(
+    new Set([produtoAlvo.id, produtoAlvo.referencia].map((value) => value?.trim()).filter(Boolean))
+  ) as string[];
+  const normalizedTaskIds = new Set(pickedTaskIds.map((value) => normalizeKey(value)));
+  const queue: Record<string, unknown>[] = [responseRecord];
+  const seen = new Set<object>();
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || seen.has(current)) continue;
+    seen.add(current);
+
+    const mapped = mapOperationCandidatesToManual(current, produtoAlvo.operacoes);
+    if (Object.keys(mapped).length > 0) return current;
+
+    const nestedPools =
+      current.candidate_pools ??
+      current.candidatePools ??
+      current.pools ??
+      current.operation_candidates ??
+      current.operationCandidates ??
+      null;
+    const coercedNestedPools = coerceCandidatePoolsObject(nestedPools, produtoAlvo.operacoes);
+    if (coercedNestedPools) queue.push(coercedNestedPools);
+
+    Object.entries(current).forEach(([key, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return;
+      const nested = value as Record<string, unknown>;
+      const nestedTaskId = pickString(nested as ApiRecord, ["task_id", "taskId", "task_code", "taskCode", "reference"]);
+      if (nestedTaskId && normalizedTaskIds.has(normalizeKey(nestedTaskId))) {
+        queue.push(nested);
+        return;
+      }
+      if (normalizedTaskIds.has(normalizeKey(key))) {
+        queue.push(nested);
+      }
+    });
+  }
+
+  return null;
+};
+
 function criarUnidadePadrao(operadores: Operador[]) {
   return {
     operadores: operadores,
@@ -896,10 +1106,15 @@ export default function Home() {
   const [produtosApi, setProdutosApi] = useState<Produto[]>([]);
   const [produtoSelecionado, setProdutoSelecionado] = useState<string | null>(null);
   const [loadingFichas, setLoadingFichas] = useState(false);
-  const [loadingFichaPorCodigo, setLoadingFichaPorCodigo] = useState(false);
+  const [polyvalenceByOperation, setPolyvalenceByOperation] = useState<Record<string, PolyvalenceCapability[]>>({});
+  const [candidatePoolsByOperation, setCandidatePoolsByOperation] = useState<Record<string, string[]>>({});
   const [quantidadeObjetivoInput, setQuantidadeObjetivoInput] = useState("");
   const [numeroOperadoresInput, setNumeroOperadoresInput] = useState("");
   const [erroApi, setErroApi] = useState<string | null>(null);
+  const [confirmarCalculoModal, setConfirmarCalculoModal] = useState<{
+    open: boolean;
+    identificador: string;
+  }>({ open: false, identificador: "" });
   const [erroCalculoModal, setErroCalculoModal] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1038,9 +1253,6 @@ export default function Home() {
           proximoSelecionado = fichas.some((f) => f.id === prev) ? prev : fichas[0]?.id || null;
           return proximoSelecionado;
         });
-        if (proximoSelecionado) {
-          void handleCarregarFichaPorCodigo(proximoSelecionado, fichas);
-        }
       } catch (error) {
         console.error("Erro ao carregar fichas da familia:", error);
         setErroApi("Nao foi possivel carregar fichas tecnicas da familia selecionada.");
@@ -1053,66 +1265,101 @@ export default function Home() {
     carregarFichas();
   }, [grupoArtigoSelecionado]);
 
-  // â”€â”€ Load detailed sheet by code â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const handleCarregarFichaPorCodigo = async (
-    produtoId: string,
-    sourceProdutos: Produto[] = produtosApi
-  ) => {
-    const produtoBase = sourceProdutos.find((p) => p.id === produtoId);
-    if (!produtoBase) return;
-    const codigos = Array.from(new Set([produtoBase.id, produtoBase.referencia].map((v) => v?.trim()).filter(Boolean))) as string[];
-    if (codigos.length === 0) return;
-    setLoadingFichaPorCodigo(true);
-    setErroApi(null);
-    try {
-      let sheet: ApiRecord | null = null;
-      let codigoResolvido = codigos[0];
-      let ultimaFalha: unknown = null;
-      for (const codigo of codigos) {
-        try {
-          const resposta = await axios.get(`${API_BASE_URL}/technical-sheets/code/${encodeURIComponent(codigo)}`);
-          const candidate = ensureRecord(resposta.data);
-          if (candidate) {
-            sheet = candidate;
-            codigoResolvido = codigo;
-            break;
-          }
-        } catch (error) {
-          ultimaFalha = error;
-        }
-      }
-      if (!sheet) {
-        throw ultimaFalha || new Error("Resposta invalida para ficha tecnica por codigo");
-      }
-      const familyId = pickString(sheet, ["family_id","family","group_id"]) || grupoArtigoSelecionado;
-      const ficha = mapApiTaskToProduto(sheet, 0, familyId);
-      const referenciaCodigo =
-        pickString(sheet, ["code","task_code","reference","referencia"]) ||
-        ficha.referencia ||
-        codigoResolvido;
-      const normalizada: Produto = {
-        ...produtoBase,
-        ...ficha,
-        id: produtoBase.id,
-        referencia: referenciaCodigo,
-      };
-      setProdutosApi((current) => {
-        const exists = current.some((p) => p.id === produtoId);
-        if (!exists) return [...current, normalizada];
-        return current.map((p) => (p.id === produtoId ? normalizada : p));
-      });
-    } catch (error) {
-      console.error("Erro ao carregar ficha por codigo:", error);
-      setErroApi("Nao foi possivel carregar detalhes da ficha tecnica pelo codigo.");
-    } finally {
-      setLoadingFichaPorCodigo(false);
-    }
-  };
-
   const handleSelecionarFicha = (produtoId: string) => {
     setProdutoSelecionado(produtoId);
-    void handleCarregarFichaPorCodigo(produtoId);
   };
+
+  useEffect(() => {
+    const produtoAtual = produtosApi.find((p) => p.id === produtoSelecionado);
+    if (!produtoAtual) {
+      setCandidatePoolsByOperation({});
+      return;
+    }
+
+    const carregarCandidatePools = async () => {
+      const taskIds = Array.from(
+        new Set([produtoAtual.id, produtoAtual.referencia].map((value) => value?.trim()).filter(Boolean))
+      ) as string[];
+
+      if (taskIds.length === 0) {
+        setCandidatePoolsByOperation({});
+        return;
+      }
+
+      let mapped: Record<string, string[]> = {};
+
+      for (const taskId of taskIds) {
+        try {
+          const resposta = await axios.get(
+            `${API_BASE_URL}/technical-sheets/${encodeURIComponent(taskId)}/candidate-pools`
+          );
+          const responseData = resposta.data;
+          if (!responseData || typeof responseData !== "object") continue;
+
+          const responseRecord = coerceCandidatePoolsObject(responseData, produtoAtual.operacoes);
+          if (!responseRecord) continue;
+
+          const candidatePools = extractCandidatePoolsForProduto(responseRecord, produtoAtual);
+          if (!candidatePools) continue;
+
+          const parsed = mapOperationCandidatesToManual(candidatePools, produtoAtual.operacoes);
+          mapped = Object.fromEntries(
+            Object.entries(parsed).map(([operacaoId, operatorIds]) => [
+              operacaoId,
+              Array.from(
+                new Set(
+                  operatorIds.map((operatorId) => mapOperatorToCode(String(operatorId), dados.operadores))
+                )
+              ),
+            ])
+          );
+          if (Object.keys(mapped).length > 0) break;
+        } catch {
+          // tenta proximo task_id
+        }
+      }
+
+      setCandidatePoolsByOperation(mapped);
+    };
+
+    void carregarCandidatePools();
+  }, [produtoSelecionado, produtosApi, dados.operadores]);
+
+  useEffect(() => {
+    if (!grupoArtigoSelecionado) {
+      setPolyvalenceByOperation({});
+      return;
+    }
+    const carregarPolyvalencia = async () => {
+      try {
+        const resposta = await axios.get(`${API_BASE_URL}/polyvalence`, {
+          params: { family_id: grupoArtigoSelecionado },
+        });
+        const colaboradores = ensureArray(resposta.data);
+        const capacidades: Record<string, PolyvalenceCapability[]> = {};
+
+        for (const colaborador of colaboradores) {
+          const colaboradorIdRaw = pickString(colaborador, ["collaborator_id", "operator_id", "id"]);
+          if (!colaboradorIdRaw) continue;
+          const operatorId = mapOperatorToCode(colaboradorIdRaw, dados.operadores);
+          const operacoesColaborador = ensureArray((colaborador as ApiRecord).operations);
+          for (const op of operacoesColaborador) {
+            const operationId = pickString(op, ["operation_id", "operation_code", "id"]);
+            if (!operationId) continue;
+            const ole = pickNumber(op, ["ole_percentage", "ole", "ole_percent"]) ?? 0;
+            if (!capacidades[operationId]) capacidades[operationId] = [];
+            capacidades[operationId].push({ operatorId, ole });
+          }
+        }
+
+        setPolyvalenceByOperation(capacidades);
+      } catch (error) {
+        console.error("Erro ao carregar polyvalence:", error);
+        setPolyvalenceByOperation({});
+      }
+    };
+    void carregarPolyvalencia();
+  }, [grupoArtigoSelecionado, dados.operadores]);
 
   // â”€â”€â”€ Atalhos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -1270,28 +1517,7 @@ export default function Home() {
     }));
   };
 
-  const handleToggleOperadorOperacao = (operacaoNome: string, operadorId: string) => {
-    const atribuidos = atribuicoesManual[operacaoNome] || [];
-    const novaAtribuicao = atribuidos.includes(operadorId)
-      ? atribuidos.filter((id) => id !== operadorId)
-      : [...atribuidos, operadorId];
-    handleAtribuirManualmente(operacaoNome, novaAtribuicao);
-  };
-
-  const operadorPodeFazerOperacao = (operador: Operador, operacaoNome: string): boolean => {
-    return Object.values(operador.competencias).some(
-      (comp) => comp && comp.operacao === operacaoNome
-    );
-  };
-
-  const getOleOperadorOperacao = (operador: Operador, operacaoNome: string): number => {
-    const competencia = Object.values(operador.competencias).find(
-      (comp) => comp && comp.operacao === operacaoNome
-    );
-    return competencia ? competencia.ole : operador.oleHistorico;
-  };
-
-  const handleCalcular = async () => {
+  const handleCalcular = async (confirmado = false) => {
     try {
       const getMaxPostsPayload = () => {
         const postosInputEl = document.getElementById("lc-postos") as HTMLInputElement | null;
@@ -1318,8 +1544,10 @@ export default function Home() {
         return;
       }
       const identificadorFicha = produto?.referencia || produto?.id || taskCodeSelecionado || "ficha selecionada";
-      const confirmou = window.confirm(`Confirmar balanceamento para ${identificadorFicha}?`);
-      if (!confirmou) return;
+      if (!confirmado) {
+        setConfirmarCalculoModal({ open: true, identificador: identificadorFicha });
+        return;
+      }
       // Modo 1: usar endpoint automatico (sequencial ou agrupado por maquina)
       if (usarAllocateModo1Api) {
         if (!taskCodeSelecionado) {
@@ -1466,6 +1694,8 @@ export default function Home() {
           operacoes,
           config,
           layoutConfig,
+          taskCode: taskCodeSelecionado,
+          ajusteBodyBase: r,
         };
 
         sessionStorage.setItem("balanceamentoData", JSON.stringify(dataToPass));
@@ -1627,6 +1857,8 @@ export default function Home() {
           operacoes,
           config,
           layoutConfig,
+          taskCode: taskCodeSelecionado,
+          ajusteBodyBase: r,
         };
 
         sessionStorage.setItem("balanceamentoData", JSON.stringify(dataToPass));
@@ -1789,6 +2021,8 @@ export default function Home() {
           operacoes,
           config,
           layoutConfig,
+          taskCode: taskCodeSelecionado,
+          ajusteBodyBase: r,
         };
 
         sessionStorage.setItem("balanceamentoData", JSON.stringify(dataToPass));
@@ -1893,6 +2127,8 @@ export default function Home() {
           operacoes: operacoesManual,
           config,
           layoutConfig,
+          taskCode,
+          ajusteBodyBase: respostaCustom.data,
         };
 
         sessionStorage.setItem("balanceamentoData", JSON.stringify(dataToPass));
@@ -1908,6 +2144,7 @@ export default function Home() {
         operacoes,
         config,
         layoutConfig,
+        taskCode: taskCodeSelecionado,
       };
 
       sessionStorage.setItem("balanceamentoData", JSON.stringify(dataToPass));
@@ -2069,12 +2306,12 @@ export default function Home() {
                 onValueChange={setGrupoArtigoSelecionado}
                 disabled={loadingFamilias || familias.length === 0}
               >
-                <SelectTrigger className="rounded-sm text-sm">
+                <SelectTrigger className="rounded-sm text-sm cursor-pointer">
                   <SelectValue placeholder={loadingFamilias ? "A carregar grupos..." : "Selecione um grupo"} />
                 </SelectTrigger>
                 <SelectContent className="rounded-sm">
                   {familias.map((familia) => (
-                    <SelectItem key={familia.id} value={familia.id} className="text-sm">
+                    <SelectItem key={familia.id} value={familia.id} className="text-sm cursor-pointer">
                       {familia.label}
                     </SelectItem>
                   ))}
@@ -2089,20 +2326,19 @@ export default function Home() {
               <Select
                 value={produtoSelecionado || undefined}
                 onValueChange={handleSelecionarFicha}
-                disabled={loadingFichas || loadingFichaPorCodigo || produtosApi.length === 0}
+                disabled={loadingFichas || produtosApi.length === 0}
               >
-                <SelectTrigger className="rounded-sm text-sm">
+                <SelectTrigger className="rounded-sm text-sm cursor-pointer">
                   <SelectValue
                     placeholder={
                       loadingFichas ? "A carregar fichas..." :
-                      loadingFichaPorCodigo ? "A carregar detalhes..." :
                       "Selecione uma ficha tecnica"
                     }
                   />
                 </SelectTrigger>
                 <SelectContent className="rounded-sm">
                   {produtosApi.map((prod) => (
-                    <SelectItem key={prod.id} value={prod.id} className="text-sm">
+                    <SelectItem key={prod.id} value={prod.id} className="text-sm cursor-pointer">
                       <span className="font-mono text-xs text-gray-500 mr-2">{prod.referencia}</span>
                       {prod.nome}
                       <span className="text-gray-400 ml-2">({prod.operacoes.length} ops)</span>
@@ -2384,7 +2620,11 @@ export default function Home() {
                 </thead>
                 <tbody>
                   {operacoes.map((operacao) => {
-                    const operadoresAtribuidos = atribuicoesManual[operacao.nome] || [];
+                    const candidatePoolOperacao = candidatePoolsByOperation[operacao.id] || [];
+                    const usarCandidatePool = candidatePoolOperacao.length > 0;
+                    const operadoresAtribuidos = usarCandidatePool
+                      ? candidatePoolOperacao
+                      : (atribuicoesManual[operacao.nome] || []);
                     return (
                       <tr
                         key={operacao.id}
@@ -2407,19 +2647,20 @@ export default function Home() {
                         <td className="p-3 font-mono text-sm text-gray-700">{operacao.tempo.toFixed(2)}</td>
                         <td className="p-3 text-sm text-gray-600">{operacao.tipoMaquina || "-"}</td>
                         <td className="p-3">
-                          <OperadorSelector
-                            operadores={operadoresSelecionados.map((opId) => {
-                              const op = operadores.find((o) => o.id === opId);
-                              if (!op) return { id: opId, ole: 0, podeOperar: false };
-                              return {
-                                id: op.id,
-                                ole: getOleOperadorOperacao(op, operacao.nome),
-                                podeOperar: operadorPodeFazerOperacao(op, operacao.nome),
-                              };
-                            })}
-                            atribuidos={operadoresAtribuidos}
-                            onToggle={(operadorId) => handleToggleOperadorOperacao(operacao.nome, operadorId)}
-                          />
+                          {operadoresAtribuidos.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {operadoresAtribuidos.map((operadorId) => (
+                                <span
+                                  key={`${operacao.id}-${operadorId}`}
+                                  className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200"
+                                >
+                                  {operadorId}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-400 italic">Sem operadores disponíveis</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -2458,6 +2699,45 @@ export default function Home() {
           Calcular Balanceamento
         </Button>
       </div>
+
+      <Dialog
+        open={confirmarCalculoModal.open}
+        onOpenChange={(open) => {
+          if (!open) setConfirmarCalculoModal({ open: false, identificador: "" });
+        }}
+      >
+        <DialogContent className="rounded-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold flex items-center gap-2 text-amber-700">
+              <AlertTriangle className="w-4 h-4" />
+              Confirmar balanceamento
+            </DialogTitle>
+            <DialogDescription className="text-xs bg-amber-50 border border-amber-200 rounded-sm px-3 py-2 text-amber-700">
+              Confirmar balanceamento para <strong>{confirmarCalculoModal.identificador}</strong>?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-sm text-xs cursor-pointer"
+              onClick={() => setConfirmarCalculoModal({ open: false, identificador: "" })}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              className="bg-amber-600 hover:bg-amber-700 rounded-sm text-xs cursor-pointer"
+              onClick={async () => {
+                setConfirmarCalculoModal({ open: false, identificador: "" });
+                await handleCalcular(true);
+              }}
+            >
+              Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(erroCalculoModal)}

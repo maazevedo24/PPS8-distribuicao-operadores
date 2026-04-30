@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { ResultadosBalanceamento, DistribuicaoCarga, OperationAllocation } from "../types";
+import { Button } from "./ui/button";
 
 interface TabelaDistribuicaoProps {
   resultados: ResultadosBalanceamento;
@@ -8,6 +9,9 @@ interface TabelaDistribuicaoProps {
   operacoes: any[];
   onDistribuicaoChange?: (novaDistribuicao: DistribuicaoCarga[]) => void;
   unidadeTempo?: "min" | "s";
+  viewMode?: "tempo" | "percentagem";
+  onConfirmarEdicao?: (editedRows: OperationAllocationRow[]) => Promise<void>;
+  isAjustando?: boolean;
 }
 
 type OperationAllocationRow = OperationAllocation & {
@@ -171,6 +175,68 @@ const getOperatorTime = (row: OperationAllocationRow, column: OperatorColumn): n
   return null;
 };
 
+const normalizePercentageValue = (value: number): number =>
+  value <= 1 ? value * 100 : value;
+
+const getOperatorPercentage = (
+  row: OperationAllocationRow,
+  column: OperatorColumn
+): number | null => {
+  const percentageMaps = [
+    (row as Record<string, unknown>).occupancy_percentage,
+    (row as Record<string, unknown>).occupancy_percentages,
+    (row as Record<string, unknown>).operator_percentages,
+    (row as Record<string, unknown>).operator_percentage,
+    (row as Record<string, unknown>).operator_percents,
+    (row as Record<string, unknown>).operator_occupancy,
+  ];
+
+  for (const map of percentageMaps) {
+    if (!map || typeof map !== "object") continue;
+    const entries = Object.entries(map as Record<string, unknown>);
+    const direct = parseNumberLike((map as Record<string, unknown>)[column.code]);
+    if (direct != null) return normalizePercentageValue(direct);
+    const normalized = entries.find(([candidate]) => normalizeKey(candidate) === column.key);
+    if (!normalized) continue;
+    const parsed = parseNumberLike(normalized[1]);
+    if (parsed != null) return normalizePercentageValue(parsed);
+  }
+
+  const allocations = Array.isArray(row.operator_allocations) ? row.operator_allocations : [];
+  for (const allocation of allocations) {
+    const record = allocation as Record<string, unknown>;
+    const operatorCode = String(
+      record.operator_code ??
+        record.operator_id ??
+        record.operador_id ??
+        record.operator ??
+        record.operador ??
+        record.code ??
+        ""
+    ).trim();
+    if (!operatorCode || normalizeKey(operatorCode) !== column.key) continue;
+
+    const percentageValue =
+      record.occupancy_percentage ??
+      record.percentage ??
+      record.percent ??
+      record.occupancy_percent ??
+      record.operator_occupancy ??
+      record.allocation_percentage ??
+      record.share;
+    const parsed = parseNumberLike(percentageValue);
+    if (parsed != null) return normalizePercentageValue(parsed);
+  }
+
+  const totalTime = parseNumberLike(row.total_time_seconds) ?? 0;
+  if (totalTime > 0) {
+    const operatorTime = getOperatorTime(row, column);
+    if (operatorTime != null) return (operatorTime / totalTime) * 100;
+  }
+
+  return null;
+};
+
 const thBase = (extra?: CSSProperties): CSSProperties => ({
   background: "#ffffff",
   color: "#374151",
@@ -273,12 +339,20 @@ function TabelaAllocacoes({
   resultados,
   operadores,
   operacoes,
+  viewMode = "tempo",
+  onConfirmarEdicao,
+  isAjustando = false,
 }: {
   resultados: ResultadosBalanceamento;
   operadores: any[];
   operacoes: any[];
+  viewMode?: "tempo" | "percentagem";
+  onConfirmarEdicao?: (editedRows: OperationAllocationRow[]) => Promise<void>;
+  isAjustando?: boolean;
 }) {
-  const rows = useMemo<OperationAllocationRow[]>(
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const baseRows = useMemo<OperationAllocationRow[]>(
     () => {
       const apiRows = (resultados.operation_allocations || []) as OperationAllocationRow[];
       const sourceRows =
@@ -289,6 +363,8 @@ function TabelaAllocacoes({
     },
     [resultados.operation_allocations, resultados.distribuicao, operacoes]
   );
+  const [draftRows, setDraftRows] = useState<OperationAllocationRow[]>([]);
+  const rows = isEditing ? draftRows : baseRows;
 
   const operatorColumns = useMemo(
     () => buildOperatorColumns(rows, operadores),
@@ -312,6 +388,23 @@ function TabelaAllocacoes({
   }, [rows, operatorColumns]);
 
   const totalTime = rows.reduce((sum, row) => sum + (parseNumberLike(row.total_time_seconds) ?? 0), 0);
+  const totalsByOperatorPercent = useMemo(() => {
+    const percentages: Record<string, number> = {};
+    operatorColumns.forEach((column) => {
+      percentages[column.key] = rows.reduce((sum, row) => {
+        const value = getOperatorPercentage(row, column);
+        return sum + (value ?? 0);
+      }, 0);
+    });
+    return percentages;
+  }, [operatorColumns, rows]);
+
+  const formatMetric = (value: number | null | undefined): string => {
+    if (value == null) return "-";
+    if (viewMode === "percentagem") return `${formatExact(value)}%`;
+    return formatExact(value);
+  };
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -327,7 +420,58 @@ function TabelaAllocacoes({
             </div>
           ))}
         </div>
-        <span className="text-[10px] text-gray-400 shrink-0">Tabela apenas leitura</span>
+        <div className="flex items-center gap-2">
+          {onConfirmarEdicao ? (
+            isEditing ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-6 px-2 text-[10px]"
+                  onClick={() => {
+                    setDraftRows(baseRows);
+                    setIsEditing(false);
+                  }}
+                  disabled={isSaving || isAjustando}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-6 px-2 text-[10px]"
+                  disabled={isSaving || isAjustando}
+                  onClick={async () => {
+                    try {
+                      setIsSaving(true);
+                      await onConfirmarEdicao(draftRows);
+                      setIsEditing(false);
+                    } finally {
+                      setIsSaving(false);
+                    }
+                  }}
+                >
+                  {isSaving || isAjustando ? "A ajustar..." : "Confirmar alteracoes"}
+                </Button>
+              </>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                className="h-6 px-2 text-[10px]"
+                onClick={() => {
+                  setDraftRows(structuredClone(baseRows));
+                  setIsEditing(true);
+                }}
+                disabled={viewMode !== "tempo" || isAjustando}
+              >
+                Editar
+              </Button>
+            )
+          ) : null}
+          {isEditing ? <span className="text-[10px] text-gray-400 shrink-0">Modo edicao (s)</span> : null}
+        </div>
       </div>
 
       <div className="border border-gray-200 rounded-sm overflow-x-auto overflow-y-auto bg-white" style={{ maxHeight: "calc(100vh - 290px)", width: "100%" }}>
@@ -392,7 +536,11 @@ function TabelaAllocacoes({
                     {formatExact(row.total_time_seconds)}
                   </td>
                   {operatorColumns.map((column) => {
-                    const value = getOperatorTime(row, column);
+                    const value =
+                      viewMode === "percentagem"
+                        ? getOperatorPercentage(row, column)
+                        : getOperatorTime(row, column);
+                    const editable = isEditing && viewMode === "tempo";
                     return (
                       <td
                         key={column.key}
@@ -403,7 +551,28 @@ function TabelaAllocacoes({
                           color: value == null ? "#d1d5db" : "#2563eb",
                         })}
                       >
-                        {value == null ? "-" : formatExact(value)}
+                        {editable ? (
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={value == null ? "" : value}
+                            onChange={(e) => {
+                              const next = parseNumberLike(e.currentTarget.value) ?? 0;
+                              setDraftRows((prev) =>
+                                prev.map((r, idx) => {
+                                  if (idx !== index) return r;
+                                  const nextRow = { ...r, operator_times: { ...(r.operator_times || {}) } };
+                                  nextRow.operator_times![column.code] = Math.max(0, next);
+                                  return nextRow;
+                                })
+                              );
+                            }}
+                            className="w-full h-5 text-[11px] px-1 border border-gray-300 rounded-sm text-center font-mono"
+                          />
+                        ) : (
+                          formatMetric(value)
+                        )}
                       </td>
                     );
                   })}
@@ -430,7 +599,9 @@ function TabelaAllocacoes({
                     color: "#2563eb",
                   })}
                 >
-                  {formatExact(totalsByOperator[column.key] ?? 0)}
+                  {viewMode === "percentagem"
+                    ? formatMetric(totalsByOperatorPercent[column.key] ?? 0)
+                    : formatExact(totalsByOperator[column.key] ?? 0)}
                 </td>
               ))}
             </tr>
@@ -445,12 +616,18 @@ export function TabelaDistribuicao({
   resultados,
   operadores,
   operacoes,
+  viewMode = "tempo",
+  onConfirmarEdicao,
+  isAjustando = false,
 }: TabelaDistribuicaoProps) {
   return (
     <TabelaAllocacoes
       resultados={resultados}
       operadores={operadores}
       operacoes={operacoes}
+      viewMode={viewMode}
+      onConfirmarEdicao={onConfirmarEdicao}
+      isAjustando={isAjustando}
     />
   );
 }
