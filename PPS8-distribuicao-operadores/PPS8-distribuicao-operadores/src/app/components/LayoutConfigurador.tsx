@@ -36,17 +36,18 @@ interface LayoutConfiguradorProps {
   operacoes: any[];
   onLayoutChange?: (config: LayoutConfig) => void;
   agruparPorMaquina?: boolean;
+  value?: LayoutConfig;
 }
 
-export function LayoutConfigurador({ operacoes, onLayoutChange, agruparPorMaquina = false }: LayoutConfiguradorProps) {
-  const [tipoLayout, setTipoLayout] = useState<"linha" | "espinha">("linha");
-  const [postosPorLado, setPostosPorLado] = useState(8);
-  const [postosPorLadoInput, setPostosPorLadoInput] = useState("8");
-  const [distanciaMaxima, setDistanciaMaxima] = useState(3);
-  const [distanciaMaximaInput, setDistanciaMaximaInput] = useState("3");
-  const [permitirRetrocesso, setPermitirRetrocesso] = useState(false);
-  const [permitirCruzamento, setPermitirCruzamento] = useState(true);
-  const [restricoes, setRestricoes] = useState<any[]>([]);
+export function LayoutConfigurador({ operacoes, onLayoutChange, agruparPorMaquina = false, value }: LayoutConfiguradorProps) {
+  const [tipoLayout, setTipoLayout] = useState<"linha" | "espinha">(value?.tipoLayout || "linha");
+  const [postosPorLado, setPostosPorLado] = useState(value?.postosPorLado ?? 8);
+  const [postosPorLadoInput, setPostosPorLadoInput] = useState(String(value?.postosPorLado ?? 8));
+  const [distanciaMaxima, setDistanciaMaxima] = useState(value?.distanciaMaxima ?? 3);
+  const [distanciaMaximaInput, setDistanciaMaximaInput] = useState(String(value?.distanciaMaxima ?? 3));
+  const [permitirRetrocesso, setPermitirRetrocesso] = useState(value?.permitirRetrocesso ?? false);
+  const [permitirCruzamento, setPermitirCruzamento] = useState(value?.permitirCruzamento ?? true);
+  const [restricoes, setRestricoes] = useState<any[]>(value?.restricoes ?? []);
   const [dialogRestricaoAberto, setDialogRestricaoAberto] = useState(false);
   const [novaRestricao, setNovaRestricao] = useState<any>({
     tipoMaquina1: "",
@@ -70,6 +71,17 @@ export function LayoutConfigurador({ operacoes, onLayoutChange, agruparPorMaquin
       restricoes,
     });
   }, [tipoLayout, postosPorLado, distanciaMaxima, permitirRetrocesso, permitirCruzamento, restricoes]);
+
+  // Sincronizar estado local quando o valor externo muda (ex.: carregar sessao/estado anterior).
+  useEffect(() => {
+    if (!value) return;
+    setTipoLayout(value.tipoLayout);
+    setPostosPorLado(value.postosPorLado);
+    setDistanciaMaxima(value.distanciaMaxima);
+    setPermitirRetrocesso(value.permitirRetrocesso);
+    setPermitirCruzamento(value.permitirCruzamento);
+    setRestricoes(value.restricoes || []);
+  }, [value]);
 
   useEffect(() => {
     setPostosPorLadoInput(String(postosPorLado));
@@ -362,4 +374,3 @@ export function LayoutConfigurador({ operacoes, onLayoutChange, agruparPorMaquin
     </div>
   );
 }
-

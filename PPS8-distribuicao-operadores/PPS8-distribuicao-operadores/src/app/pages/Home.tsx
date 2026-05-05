@@ -1529,14 +1529,10 @@ export default function Home() {
           limit_not_divide_lower: limitNotDivideLower,
           line_type: layoutConfig.tipoLayout,
           max_posts: maxPosts,
+          max_position_deviation: Math.max(1, Number(layoutConfig.distanciaMaxima) || 1),
+          position_deviation_mode: layoutConfig.permitirRetrocesso ? "both" : "forward",
         };
-        const payload = config.agruparMaquinas
-          ? {
-              ...payloadBase,
-              max_position_deviation: Math.max(1, Number(layoutConfig.distanciaMaxima) || 1),
-              position_deviation_mode: layoutConfig.permitirRetrocesso ? "both" : "forward",
-            }
-          : payloadBase;
+        const payload = payloadBase;
         const endpointModo1 = config.agruparMaquinas ? "allocate-grouped" : "allocate";
 
         const resposta = await axios.post(
@@ -1637,6 +1633,7 @@ export default function Home() {
         const resultadosApi = {
           distribuicao,
           operation_allocations: operationAllocations,
+          machine_times_per_operator: (r as any)?.machine_times_per_operator ?? (r as any)?.machineTimesPerOperator ?? null,
           taktTime,
           tempoCiclo,
           numeroCiclosPorHora,
@@ -1690,14 +1687,10 @@ export default function Home() {
           line_type: layoutConfig.tipoLayout,
           max_posts: maxPosts,
           objective_pieces: quantidadeObjetivo,
+          max_position_deviation: Math.max(1, Number(layoutConfig.distanciaMaxima) || 1),
+          position_deviation_mode: layoutConfig.permitirRetrocesso ? "both" : "forward",
         };
-        const payload = config.agruparMaquinas
-          ? {
-              ...payloadBase,
-              max_position_deviation: Math.max(1, Number(layoutConfig.distanciaMaxima) || 1),
-              position_deviation_mode: layoutConfig.permitirRetrocesso ? "both" : "forward",
-            }
-          : payloadBase;
+        const payload = payloadBase;
         const endpointModo2 = config.agruparMaquinas
           ? "allocate-grouped-objective"
           : "allocate-objective";
@@ -1800,6 +1793,7 @@ export default function Home() {
         const resultadosApi = {
           distribuicao,
           operation_allocations: operationAllocations,
+          machine_times_per_operator: (r as any)?.machine_times_per_operator ?? (r as any)?.machineTimesPerOperator ?? null,
           taktTime,
           tempoCiclo,
           numeroCiclosPorHora,
@@ -1854,14 +1848,10 @@ export default function Home() {
           line_type: layoutConfig.tipoLayout,
           max_posts: maxPosts,
           num_operators: numeroOperadoresPedido,
+          max_position_deviation: Math.max(1, Number(layoutConfig.distanciaMaxima) || 1),
+          position_deviation_mode: layoutConfig.permitirRetrocesso ? "both" : "forward",
         };
-        const payload = config.agruparMaquinas
-          ? {
-              ...payloadBase,
-              max_position_deviation: Math.max(1, Number(layoutConfig.distanciaMaxima) || 1),
-              position_deviation_mode: layoutConfig.permitirRetrocesso ? "both" : "forward",
-            }
-          : payloadBase;
+        const payload = payloadBase;
         const endpointModo3 = config.agruparMaquinas
           ? "allocate-grouped-manual"
           : "allocate-manual";
@@ -1964,6 +1954,7 @@ export default function Home() {
         const resultadosApi = {
           distribuicao,
           operation_allocations: operationAllocations,
+          machine_times_per_operator: (r as any)?.machine_times_per_operator ?? (r as any)?.machineTimesPerOperator ?? null,
           taktTime,
           tempoCiclo,
           numeroCiclosPorHora,
@@ -2070,6 +2061,7 @@ export default function Home() {
         const resultadosCustom = {
           distribuicao,
           operation_allocations: operationAllocations,
+          machine_times_per_operator: (r as any)?.machine_times_per_operator ?? (r as any)?.machineTimesPerOperator ?? null,
           taktTime,
           tempoCiclo,
           numeroCiclosPorHora,
@@ -2640,6 +2632,7 @@ export default function Home() {
       {/* Configuracao de Layout */}
       <LayoutConfigurador
         operacoes={operacoes}
+        value={layoutConfig}
         onLayoutChange={setLayoutConfig}
         agruparPorMaquina={config.agruparMaquinas}
       />

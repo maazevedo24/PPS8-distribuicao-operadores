@@ -1,4 +1,4 @@
-import { ResultadosBalanceamento } from "../types";
+﻿import { ResultadosBalanceamento } from "../types";
 import { LayoutConfig } from "./LayoutConfigurador";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { ArrowRight, Factory, Layout, BarChart2 } from "lucide-react";
@@ -167,7 +167,7 @@ export function VisualizadorFluxo({
     return mapped;
   }, [resultados.operation_allocations, estacoesBase, estacoesSet]);
 
-  // Agrupar operações por tipo de máquina
+  // Agrupar operaÃ§Ãµes por tipo de mÃ¡quina
   const maquinasPorTipo = useMemo(() => operacoes.reduce((acc: any, op: any) => {
     const tipo = op.tipoMaquina || "Geral";
     if (!acc[tipo]) {
@@ -198,12 +198,45 @@ export function VisualizadorFluxo({
     "#f59e0b", "#8b5cf6", "#06b6d4", "#10b981",
   ];
 
+  const barrasMaquinaOperador = useMemo(() => {
+    const raw = (resultados as any)?.machine_times_per_operator ?? (resultados as any)?.machineTimesPerOperator;
+    if (!raw || typeof raw !== "object") return [] as Array<{ key: string; xLabel: string; tempoSegundos: number; color: string }>;
+
+    const bars: Array<{ key: string; xLabel: string; tempoSegundos: number; color: string }> = [];
+    let idx = 0;
+    Object.entries(raw as Record<string, any>).forEach(([operatorKey, entries]) => {
+      if (!Array.isArray(entries)) return;
+      entries.forEach((entry: any) => {
+        const machine = String(entry?.machine_name || entry?.machine || "-").trim() || "-";
+        const hours = Number(entry?.time_hours);
+        const secondsDirect = Number(entry?.time_seconds);
+        const minutesDirect = Number(entry?.time_minutes ?? entry?.time_min);
+        const tempoSegundos = Number.isFinite(secondsDirect)
+          ? secondsDirect
+          : Number.isFinite(hours)
+            ? hours * 3600
+            : Number.isFinite(minutesDirect)
+              ? minutesDirect * 60
+              : 0;
+        if (!Number.isFinite(tempoSegundos) || tempoSegundos <= 0) return;
+        bars.push({
+          key: `${operatorKey}-${machine}-${idx}`,
+          xLabel: `${operatorKey} - ${machine}`,
+          tempoSegundos,
+          color: pieColors[idx % pieColors.length],
+        });
+        idx += 1;
+      });
+    });
+    return bars;
+  }, [resultados, pieColors]);
+
   return (
     <div className="space-y-6">
-      {/* Linha de Produção + Donut — lado a lado */}
+      {/* Linha de Producao + Donut - lado a lado */}
       <div className="grid grid-cols-[auto_1fr] gap-4">
 
-        {/* Visualização - Linha de Produção */}
+        {/* Visualizacao - Linha de Producao */}
         <Card className="shadow-sm border border-gray-200 rounded-sm bg-white w-fit">
           <CardHeader className="border-b border-gray-200 py-3">
             <div className="flex items-center justify-between">
@@ -212,21 +245,21 @@ export function VisualizadorFluxo({
                   <Factory className="w-4 h-4 text-purple-600" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold">Linha de Produção</div>
-                  <p className="text-[10px] text-gray-500 font-normal mt-0.5">Carga Total por Tipo de Máquina</p>
+                  <div className="text-sm font-semibold">Linha de Producao</div>
+                  <p className="text-[10px] text-gray-500 font-normal mt-0.5">Carga Total por Tipo de Maquina</p>
                 </div>
               </CardTitle>
 
-              {/* Botão Ver Planta */}
+              {/* Botao Ver Planta */}
               <Dialog>
                 <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle className="flex items-center gap-2 text-lg">
                       <Layout className="w-5 h-5 text-purple-600" />
-                      Planta de Chão de Fábrica - Layout Industrial
+                      Planta de Chao de Fabrica - Layout Industrial
                     </DialogTitle>
                     <DialogDescription className="text-sm">
-                      Vista superior da disposição física das estações e fluxo de produção
+                      Vista superior da disposicao fisica das estacoes e fluxo de producao
                     </DialogDescription>
                   </DialogHeader>
 
@@ -245,23 +278,23 @@ export function VisualizadorFluxo({
 
                       <div className="absolute top-6 left-6 text-yellow-400 font-mono text-xs z-10">
                         <div className="border-2 border-yellow-400 p-2 bg-slate-900/80 backdrop-blur-sm">
-                          <div className="font-bold text-sm mb-1">PLANTA DE PRODUÇÃO</div>
+                          <div className="font-bold text-sm mb-1">PLANTA DE PRODUCAO</div>
                           <div className="text-[10px] space-y-0.5">
                             <div>FABRICA PRINCIPAL</div>
-                            <div>ESTAÇÕES: {maquinas.length}</div>
+                            <div>ESTACOES: {maquinas.length}</div>
                             <div>ESCALA: 1:100</div>
                           </div>
                         </div>
                       </div>
 
                       <div className="absolute top-6 right-6 border-2 border-yellow-400 p-3 bg-slate-900/80 backdrop-blur-sm text-xs z-10">
-                        <div className="font-semibold text-yellow-400 mb-2 font-mono">LEGENDA OCUPAÇÃO</div>
+                        <div className="font-semibold text-yellow-400 mb-2 font-mono">LEGENDA OCUPACAO</div>
                         <div className="space-y-1 text-yellow-400/90 font-mono text-[10px]">
                           {[
                             { color: "bg-green-500", label: "< 70% NORMAL" },
-                            { color: "bg-yellow-500", label: "70-84% ATENÇÃO" },
+                            { color: "bg-yellow-500", label: "70-84% ATENCAO" },
                             { color: "bg-amber-500", label: "85-94% ELEVADO" },
-                            { color: "bg-orange-500", label: "≥ 95% CRÍTICO" },
+                            { color: "bg-orange-500", label: ">= 95% CRITICO" },
                           ].map((item, li) => (
                             <div key={`leg-ocup-${li}`} className="flex items-center gap-2">
                               <div className={`w-3 h-3 ${item.color} border border-current`} />
@@ -274,7 +307,7 @@ export function VisualizadorFluxo({
                       <div className="relative mt-24 mx-auto max-w-5xl">
                         <div className="border-2 border-dashed border-yellow-400/40 p-8 relative">
                           <div className="absolute -top-3 left-4 bg-slate-900 px-2 text-yellow-400 text-xs font-mono">
-                            ÁREA DE PRODUÇÃO
+                            AREA DE PRODUCAO
                           </div>
 
                           <div className="relative" style={{ minHeight: `${Math.max(500, Math.ceil(maquinas.length / 2) * 160 + 80)}px` }}>
@@ -327,9 +360,9 @@ export function VisualizadorFluxo({
                                   </div>
                                   <div className={`absolute ${isLeft ? "-right-44" : "-left-44"} top-0 bg-slate-800 border border-yellow-400 p-2 text-[9px] text-yellow-400 font-mono opacity-0 group-hover:opacity-100 transition-opacity z-20 w-40 shadow-xl`}>
                                     <div className="font-bold mb-1">DETALHES:</div>
-                                    <div>Operações: {maq.operacoes.length}</div>
+                                    <div>Operacoes: {maq.operacoes.length}</div>
                                     <div>Tempo: {maq.tempoTotal.toFixed(2)}min</div>
-                                    <div>Ocupação: {ocupacaoPct.toFixed(1)}%</div>
+                                    <div>Ocupacao: {ocupacaoPct.toFixed(1)}%</div>
                                   </div>
                                 </div>
                               );
@@ -360,8 +393,8 @@ export function VisualizadorFluxo({
                                   elems.push(<circle key={`joint-${idx}`} cx={spineX} cy={yPx} r="4" fill="#fbbf24" opacity="0.8" />);
                                 });
 
-                                elems.push(<text key="lbl-in" x={spineX} y={Math.max(yStart - 6, 12)} textAnchor="middle" fill="#fbbf24" fontSize="9" fontFamily="monospace" opacity="0.7">▼ ENTRADA</text>);
-                                elems.push(<text key="lbl-out" x={spineX} y={yEnd + 18} textAnchor="middle" fill="#fbbf24" fontSize="9" fontFamily="monospace" opacity="0.7">▼ SAÍDA</text>);
+                                elems.push(<text key="lbl-in" x={spineX} y={Math.max(yStart - 6, 12)} textAnchor="middle" fill="#fbbf24" fontSize="9" fontFamily="monospace" opacity="0.7">ENTRADA</text>);
+                                elems.push(<text key="lbl-out" x={spineX} y={yEnd + 18} textAnchor="middle" fill="#fbbf24" fontSize="9" fontFamily="monospace" opacity="0.7">SAIDA</text>);
 
                                 return elems;
                               })()}
@@ -373,12 +406,12 @@ export function VisualizadorFluxo({
                           <div className="text-[10px]">
                             <div className="flex items-center gap-2 mb-1">
                               <div className="w-2 h-2 bg-yellow-400 animate-pulse" />
-                              <span>FLUXO DE PRODUÇÃO ATIVO</span>
+                              <span>FLUXO DE PRODUCAO ATIVO</span>
                             </div>
-                            <div className="text-yellow-400/60">Sentido: Estação 01 → Estação {maquinas.length}</div>
+                            <div className="text-yellow-400/60">Sentido: Estacao 01 {"->"} Estacao {maquinas.length}</div>
                           </div>
                           <div className="text-right text-[10px]">
-                            <div className="text-yellow-400/60">TOTAL ESTAÇÕES</div>
+                            <div className="text-yellow-400/60">TOTAL ESTACOES</div>
                             <div className="text-xl font-bold">{maquinas.length}</div>
                           </div>
                         </div>
@@ -391,7 +424,7 @@ export function VisualizadorFluxo({
           </CardHeader>
 
           <CardContent className="p-4">
-            {/* Gráfico Donut Custom — 100% SVG, sem recharts */}
+            {/* Grafico Donut Custom - 100% SVG, sem recharts */}
             <div>
               <div className="bg-white border border-gray-200 rounded-sm p-3">
                 {(() => {
@@ -461,7 +494,7 @@ export function VisualizadorFluxo({
           </CardContent>
         </Card>
 
-        {/* Bar Chart — Operações por Máquina (gráfico custom HTML) */}
+        {/* Bar Chart - Tempo por Operador x Maquina */}
         <Card className="shadow-sm border border-gray-200 rounded-sm bg-white">
           <CardHeader className="border-b border-gray-200 py-3">
             <CardTitle className="flex items-center gap-2 text-gray-900">
@@ -469,63 +502,23 @@ export function VisualizadorFluxo({
                 <BarChart2 className="w-4 h-4 text-blue-700" />
               </div>
               <div>
-                <div className="text-sm font-semibold">Operações por Máquina</div>
+                <div className="text-sm font-semibold">Tempo por Operador x Maquina</div>
                 <p className="text-[10px] text-gray-500 font-normal mt-0.5">
-                  Tempo (s) · X = máquina usada · cor e rótulo = operação
+                  Eixo X: Operador + Maquina | Eixo Y: Tempo (s)
                 </p>
               </div>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4">
             {(() => {
-              const CHART_H = 170;
-              const BAR_W = 18;
+                            const CHART_H = 170;
+              const BAR_W = 26;
               const Y_AXIS_W = 36;
               const LABEL_H = 40;
               const NUM_TICKS = 5;
 
-              const barras: {
-                key: string;
-                maquina: string;
-                operacao: string;
-                truncOp: string;
-                tempo: number;
-                color: string;
-                opIdx: number;
-                maqIdx: number;
-              }[] = [];
-
-              const operacoesVisiveis = operacoes;
-              const operacoesOcultas = 0;
-
-              let globalBarIdx = 0;
-              operacoesVisiveis.forEach((op: any, opIdx: number) => {
-                const nomeOp = op.descricao || op.nome || `Op ${op.id ?? ""}`;
-                const truncOp = nomeOp.length > 13 ? nomeOp.slice(0, 12) + "…" : nomeOp;
-                let maquinasOp: string[] = [];
-                if (Array.isArray(op.maquinas) && op.maquinas.length > 0) {
-                  maquinasOp = op.maquinas.slice(0, 2);
-                } else {
-                  maquinasOp = [op.tipoMaquina || "Geral"];
-                  if (op.tipoMaquina2) maquinasOp.push(op.tipoMaquina2);
-                }
-                maquinasOp.forEach((maq: string, maqIdx: number) => {
-                  const truncMaq = maq.length > 8 ? maq.slice(0, 7) + "…" : maq;
-                  barras.push({
-                    key: `bar-${opIdx}-${maqIdx}`,
-                    maquina: truncMaq,
-                    operacao: nomeOp,
-                    truncOp,
-                    tempo: op.tempo || 0,
-                    color: pieColors[globalBarIdx % pieColors.length],
-                    opIdx,
-                    maqIdx,
-                  });
-                  globalBarIdx++;
-                });
-              });
-
-              const maxTempo = Math.max(...barras.map((b) => b.tempo), 0.01);
+              const barras = barrasMaquinaOperador;
+              const maxTempo = Math.max(...barras.map((b) => b.tempoSegundos), 0.01);
               const tickStep = maxTempo / (NUM_TICKS - 1);
               const ticks = Array.from({ length: NUM_TICKS }, (_, i) =>
                 parseFloat((i * tickStep).toFixed(2))
@@ -533,24 +526,8 @@ export function VisualizadorFluxo({
               const topTick = ticks[NUM_TICKS - 1] || 1;
               const getBarH = (t: number) => Math.max(2, Math.round((t / topTick) * CHART_H));
 
-              // Agrupar barras por operação
-              const grupos: typeof barras[] = [];
-              barras.forEach((b) => {
-                if (b.maqIdx === 0) grupos.push([b]);
-                else grupos[grupos.length - 1].push(b);
-              });
-
-              const GAP_INT = 0;
-              const GAP_OPS = 24;
-              const grupW = (g: typeof barras) => g.length * BAR_W + (g.length - 1) * GAP_INT;
-
               return (
                 <div className="w-full">
-                  {operacoesOcultas > 0 && (
-                    <div style={{ textAlign: "right", fontSize: 9, color: "#9ca3af", marginBottom: 4 }}>
-                      +{operacoesOcultas} operações não exibidas
-                    </div>
-                  )}
                   <div style={{ display: "flex", alignItems: "flex-start" }}>
 
                     {/* Y Axis */}
@@ -580,7 +557,7 @@ export function VisualizadorFluxo({
                     {/* Chart + Labels */}
                     <div style={{ flex: 1, minWidth: 0 }}>
 
-                      {/* Chart area + Labels — single column per group for perfect alignment */}
+                      {/* Chart area + Labels */}
                       <div style={{ position: "relative", height: CHART_H + LABEL_H }}>
 
                         {/* Grid lines */}
@@ -603,59 +580,40 @@ export function VisualizadorFluxo({
 
                         {/* Columns: bar + label, spread evenly */}
                         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "flex-start", justifyContent: "space-around" }}>
-                          {grupos.map((grupo, gIdx) => {
-                            const gW = grupW(grupo);
-                            return (
-                              <div
-                                key={`col-${gIdx}`}
-                                style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%" }}
-                              >
-                                {/* Bar slot */}
-                                <div style={{ height: CHART_H, display: "flex", alignItems: "flex-end" }}>
-                                  <div style={{ display: "flex", alignItems: "flex-end", gap: GAP_INT }}>
-                                    {grupo.map((b) => (
-                                      <div
-                                        key={b.key}
-                                        title={`${b.operacao} · ${b.maquina} · ${b.tempo}s`}
-                                        style={{
-                                          width: BAR_W,
-                                          height: getBarH(b.tempo),
-                                          background: b.color,
-                                          borderRadius: "2px 2px 0 0",
-                                        }}
-                                      />
-                                    ))}
-                                  </div>
-                                </div>
-
-                                {/* Label slot */}
-                                <div style={{ height: LABEL_H, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 4, minWidth: gW }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 2, justifyContent: "center" }}>
-                                    {grupo.map((b, bi) => (
-                                      <React.Fragment key={`mlbl-${b.key}`}>
-                                        {bi > 0 && <div style={{ width: 1, height: 10, background: "#d1d5db", flexShrink: 0 }} />}
-                                        <span style={{ fontSize: 9, fontWeight: 700, color: "#374151", whiteSpace: "nowrap" }}>
-                                          {b.maquina}
-                                        </span>
-                                      </React.Fragment>
-                                    ))}
-                                  </div>
-                                  <div style={{
+                          {barras.map((b) => (
+                            <div
+                              key={b.key}
+                              style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%" }}
+                            >
+                              <div style={{ height: CHART_H, display: "flex", alignItems: "flex-end" }}>
+                                <div
+                                  title={`${b.xLabel} · ${b.tempoSegundos.toFixed(1)}s`}
+                                  style={{
+                                    width: BAR_W,
+                                    height: getBarH(b.tempoSegundos),
+                                    background: b.color,
+                                    borderRadius: "2px 2px 0 0",
+                                  }}
+                                />
+                              </div>
+                              <div style={{ height: LABEL_H, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 4, minWidth: 72 }}>
+                                <div
+                                  style={{
                                     fontSize: 8,
-                                    color: grupo[0].color,
+                                    color: "#374151",
                                     whiteSpace: "nowrap",
                                     textAlign: "center",
-                                    marginTop: 2,
                                     overflow: "hidden",
                                     textOverflow: "ellipsis",
-                                    maxWidth: Math.max(gW + 20, 50),
-                                  }}>
-                                    {grupo[0].truncOp}
-                                  </div>
+                                    maxWidth: 96,
+                                  }}
+                                  title={b.xLabel}
+                                >
+                                  {b.xLabel}
                                 </div>
                               </div>
-                            );
-                          })}
+                            </div>
+                          ))}
                         </div>
                       </div>
 
@@ -669,7 +627,7 @@ export function VisualizadorFluxo({
 
       </div>
 
-      {/* Planta de Chão — Layout Configurado */}
+      {/* Planta de Chao - Layout Configurado */}
       {layoutConfig && (
         <Card className="shadow-sm border border-gray-200 rounded-sm bg-white w-full">
           <CardHeader className="border-b border-gray-200 py-3">
@@ -679,10 +637,10 @@ export function VisualizadorFluxo({
                   <Layout className="w-4 h-4 text-purple-600" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold">Layout - Planta de Chão</div>
+                  <div className="text-sm font-semibold">Layout - Planta de chão</div>
                   <p className="text-[10px] text-gray-500 font-normal mt-0.5">
-                    {tipoLayout === "linha" ? "Linha" : "Espinha"} · {tipoLayout === "linha" ? postosPorLadoEfetivo : postosPorLadoEfetivo * 2} estações
-                    {permitirCruzamento && tipoLayout === "espinha" ? " · Cruzamento activo" : ""}
+                    {tipoLayout === "linha" ? "Linha" : "Espinha"} - {tipoLayout === "linha" ? postosPorLadoEfetivo : postosPorLadoEfetivo * 2} estacoes
+                    {permitirCruzamento && tipoLayout === "espinha" ? " - Cruzamento activo" : ""}
                   </p>
                 </div>
               </CardTitle>
@@ -781,7 +739,7 @@ export function VisualizadorFluxo({
 
               return (
                 <div className="bg-gray-50 p-4 border border-gray-200 rounded-sm relative">
-                  <div className="absolute top-2 right-2 text-gray-500 text-[9px] font-medium">ESPINHA · {estacoes.length} EST.</div>
+                  <div className="absolute top-2 right-2 text-gray-500 text-[9px] font-medium">ESPINHA - {estacoes.length} EST.</div>
                   <div className="relative z-10 mt-2">
                     <div className="text-blue-600 text-[9px] font-bold mb-3 text-center">LADO A</div>
                     <div className="flex justify-around px-4" style={{ minHeight: "100px" }}>
@@ -794,7 +752,7 @@ export function VisualizadorFluxo({
                     <div className="h-14 relative">
                       <div className="absolute inset-x-4 top-1/2 border-t-2 border-dashed border-gray-300" />
                       <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 bg-gray-50 px-3 py-0.5 text-gray-400 text-[8px] font-semibold">
-                        CORREDOR {permitirCruzamento ? "· CRUZAMENTO" : ""}
+                        CORREDOR {permitirCruzamento ? "- CRUZAMENTO" : ""}
                       </div>
                     </div>
                     <div className="text-green-600 text-[9px] font-bold mb-3 text-center">LADO B</div>
@@ -819,7 +777,7 @@ export function VisualizadorFluxo({
                             <span key={`flow-${i}-${est}`} className="flex items-center gap-0.5">
                               <span className={`text-[7px] font-mono font-bold px-0.5 rounded-sm ${isA ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>{est}</span>
                               {i < fluxoSeq.length - 1 && (
-                                <span className={`text-[7px] ${isCross ? "text-amber-500" : "text-gray-400"}`}>{isCross ? "↕" : "→"}</span>
+                                <span className={`text-[7px] ${isCross ? "text-amber-500" : "text-gray-400"}`}>{isCross ? "<->" : "->"}</span>
                               )}
                             </span>
                           );
@@ -836,3 +794,5 @@ export function VisualizadorFluxo({
     </div>
   );
 }
+
+
