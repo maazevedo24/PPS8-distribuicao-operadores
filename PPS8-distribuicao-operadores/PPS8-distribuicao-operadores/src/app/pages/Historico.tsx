@@ -62,9 +62,8 @@ const parseMetodo = (row: ApiRecord): 1 | 2 | 3 => {
 
 const mapApiHistoryToLocal = (row: ApiRecord, index: number): HistoricoBalanceamento => {
   const id = pickString(row, ["id", "_id", "sim_id"]) || `HIST-${index + 1}`;
-  const taskCode = pickString(row, ["task_code", "task_id", "code"]);
   const familyId = pickString(row, ["family_id", "family", "family_code"]) || "SEM_FAMILIA";
-  const taskName = pickString(row, ["task_name", "name", "nome"]) || taskCode || familyId;
+  const taskName = pickString(row, ["task_name", "name", "nome", "family_name"]) || familyId;
   const createdAt = pickString(row, ["created_at", "timestamp", "created", "date"]);
   const metodo = parseMetodo(row);
 
@@ -82,7 +81,7 @@ const mapApiHistoryToLocal = (row: ApiRecord, index: number): HistoricoBalanceam
     unidade: 1,
     produtoId: familyId,
     produtoNome: taskName,
-    produtoReferencia: taskCode || familyId,
+    produtoReferencia: familyId,
     metodo,
     resultados: {
       distribuicao: [],
@@ -277,8 +276,7 @@ export default function Historico() {
   const [historico, setHistorico] = useState<HistoricoBalanceamento[]>(() => obterHistorico());
   const [filtroMetodo, setFiltroMetodo] = useState<string>("all");
   const [filtroOperador, setFiltroOperador] = useState<string>("all");
-  const [filtroFichaTecnica, setFiltroFichaTecnica] = useState<string>("all");
-  const [filtroTaskCode, setFiltroTaskCode] = useState<string>("");
+  const [pesquisaFichaTecnica, setPesquisaFichaTecnica] = useState<string>("");
   const [comparar, setComparar] = useState<string[]>([]);
   const [loadingHistorico, setLoadingHistorico] = useState(false);
   const [loadingDetalheId, setLoadingDetalheId] = useState<string | null>(null);
@@ -296,9 +294,7 @@ export default function Historico() {
   const carregarHistoricoApi = useCallback(async () => {
     setLoadingHistorico(true);
     try {
-      const params: Record<string, string> = {};
-      if (filtroTaskCode.trim()) params.task_code = filtroTaskCode.trim();
-      const resposta = await axios.get(`${API_BASE_URL}/history/`, { params });
+      const resposta = await axios.get(`${API_BASE_URL}/history/`);
       const dados = ensureArray(resposta.data);
       const mapeado = dados.map(mapApiHistoryToLocal);
       setHistorico(mapeado);
@@ -311,7 +307,7 @@ export default function Historico() {
     } finally {
       setLoadingHistorico(false);
     }
-  }, [filtroTaskCode, salvar]);
+  }, [salvar]);
 
   useEffect(() => {
     void carregarHistoricoApi();
@@ -334,25 +330,22 @@ export default function Historico() {
     return Array.from(ops).sort((a, b) => a - b);
   }, [historico]);
 
-  const fichasTecnicasUnicas = useMemo(() => {
-    const fichas = new Map<string, string>();
-    historico.forEach((item) => {
-      const key = item.produtoReferencia || item.produtoId;
-      const label = item.produtoReferencia ? `${item.produtoReferencia} - ${item.produtoNome}` : item.produtoNome;
-      fichas.set(key, label);
-    });
-    return Array.from(fichas.entries()).sort((a, b) => a[1].localeCompare(b[1]));
-  }, [historico]);
-
   const historicoFiltrado = useMemo(() => {
+    const pesquisa = pesquisaFichaTecnica.trim().toLowerCase();
     return historico.filter((item) => {
       const matchMetodo = filtroMetodo === "all" || item.metodo.toString() === filtroMetodo;
       const matchOperador = filtroOperador === "all" || item.resultados.numeroOperadores.toString() === filtroOperador;
-      const itemFicha = item.produtoReferencia || item.produtoId;
-      const matchFicha = filtroFichaTecnica === "all" || itemFicha === filtroFichaTecnica;
-      return matchMetodo && matchOperador && matchFicha;
+      const nome = String(item.produtoNome || "").toLowerCase();
+      const referencia = String(item.produtoReferencia || "").toLowerCase();
+      const produtoId = String(item.produtoId || "").toLowerCase();
+      const matchPesquisaFicha =
+        pesquisa === "" ||
+        nome.includes(pesquisa) ||
+        referencia.includes(pesquisa) ||
+        produtoId.includes(pesquisa);
+      return matchMetodo && matchOperador && matchPesquisaFicha;
     });
-  }, [historico, filtroMetodo, filtroOperador, filtroFichaTecnica]);
+  }, [historico, filtroMetodo, filtroOperador, pesquisaFichaTecnica]);
 
   const handleRemoverItem = async (id: string) => {
     if (!window.confirm("Tem certeza que deseja remover este registro?")) return;
@@ -456,32 +449,32 @@ export default function Historico() {
   const getMetodoNome = (metodo: 1 | 2 | 3): string => {
     if (metodo === 2) return "Por Quantidade";
     if (metodo === 3) return "N Fixo Operadores";
-    return "Distribuicao Ideal";
+    return "Distribuição Ideal";
   };
 
   return (
     <main className="w-full px-6 py-8 space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Historico de Balanceamentos</h1>
-          <p className="text-gray-500 mt-1 text-sm">Analise e comparacao de calculos anteriores</p>
+          <h1 className="text-2xl font-bold text-gray-900">Histórico de Balanceamentos</h1>
+          <p className="text-gray-500 mt-1 text-sm">Análise e comparação de cálculos anteriores</p>
         </div>
         {historico.length > 0 && (
           <Button variant="outline" size="sm" onClick={handleLimparHistorico} className="text-red-600 hover:text-red-700 hover:bg-red-50">
             <Trash2 className="w-4 h-4 mr-2" />
-            Limpar Historico
+            Limpar Histórico
           </Button>
         )}
       </div>
 
       {erroApi && <div className="p-3 bg-amber-50 border border-amber-200 rounded-sm text-amber-700 text-sm">{erroApi}</div>}
-      {loadingHistorico && <div className="text-sm text-gray-500">A carregar historico da API...</div>}
+      {loadingHistorico && <div className="text-sm text-gray-500">A carregar histórico da API...</div>}
 
       {historico.length === 0 ? (
         <div className="bg-white rounded-sm border border-gray-200 p-12 text-center">
           <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">Sem historico disponivel</h3>
-          <p className="text-gray-500 text-sm mb-6">Realize calculos de balanceamento para comecar a construir historico.</p>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">Sem histórico disponível</h3>
+          <p className="text-gray-500 text-sm mb-6">Realize cálculos de balanceamento para começar a construir histórico.</p>
           <Button
             onClick={() => {
               gerarHistoricoDemo();
@@ -492,28 +485,27 @@ export default function Historico() {
             className="bg-blue-500 hover:bg-blue-600 rounded-sm text-sm"
           >
             <Database className="w-4 h-4 mr-2" />
-            Gerar Dados de Demonstracao
+            Gerar Dados de Demonstração
           </Button>
         </div>
       ) : (
         <>
           <div className="grid grid-cols-4 gap-4">
-            <div className="bg-white p-6 rounded-sm border border-gray-200"><div className="flex items-center gap-3 mb-2"><div className="w-10 h-10 bg-blue-100 rounded-sm flex items-center justify-center"><BarChart3 className="w-5 h-5 text-blue-600" /></div><div><div className="text-xs text-gray-500 uppercase">Total Calculos</div><div className="text-2xl font-bold text-gray-900">{estatisticas.totalCalculos}</div></div></div></div>
-            <div className="bg-white p-6 rounded-sm border border-gray-200"><div className="flex items-center gap-3 mb-2"><div className="w-10 h-10 bg-green-100 rounded-sm flex items-center justify-center"><TrendingUp className="w-5 h-5 text-green-600" /></div><div><div className="text-xs text-gray-500 uppercase">OLE Medio</div><div className="text-2xl font-bold text-gray-900">{estatisticas.oleMedio.toFixed(1)}%</div></div></div></div>
-            <div className="bg-white p-6 rounded-sm border border-gray-200"><div className="flex items-center gap-3 mb-2"><div className="w-10 h-10 bg-orange-100 rounded-sm flex items-center justify-center"><TrendingDown className="w-5 h-5 text-orange-600" /></div><div><div className="text-xs text-gray-500 uppercase">Perdas Medias</div><div className="text-2xl font-bold text-gray-900">{estatisticas.perdasMedia.toFixed(1)}%</div></div></div></div>
-            <div className="bg-white p-6 rounded-sm border border-gray-200"><div className="flex items-center gap-3 mb-2"><div className="w-10 h-10 bg-purple-100 rounded-sm flex items-center justify-center"><Calendar className="w-5 h-5 text-purple-600" /></div><div><div className="text-xs text-gray-500 uppercase">Takt Time Medio</div><div className="text-2xl font-bold text-gray-900">{(estatisticas.taktTimeMedio * 60).toFixed(1)}s</div></div></div></div>
+            <div className="bg-white p-6 rounded-sm border border-gray-200"><div className="flex items-center gap-3 mb-2"><div className="w-10 h-10 bg-blue-100 rounded-sm flex items-center justify-center"><BarChart3 className="w-5 h-5 text-blue-600" /></div><div><div className="text-xs text-gray-500 uppercase">Total Cálculos</div><div className="text-2xl font-bold text-gray-900">{estatisticas.totalCalculos}</div></div></div></div>
+            <div className="bg-white p-6 rounded-sm border border-gray-200"><div className="flex items-center gap-3 mb-2"><div className="w-10 h-10 bg-green-100 rounded-sm flex items-center justify-center"><TrendingUp className="w-5 h-5 text-green-600" /></div><div><div className="text-xs text-gray-500 uppercase">OLE Médio</div><div className="text-2xl font-bold text-gray-900">{estatisticas.oleMedio.toFixed(1)}%</div></div></div></div>
+            <div className="bg-white p-6 rounded-sm border border-gray-200"><div className="flex items-center gap-3 mb-2"><div className="w-10 h-10 bg-orange-100 rounded-sm flex items-center justify-center"><TrendingDown className="w-5 h-5 text-orange-600" /></div><div><div className="text-xs text-gray-500 uppercase">Perdas Médias</div><div className="text-2xl font-bold text-gray-900">{estatisticas.perdasMedia.toFixed(1)}%</div></div></div></div>
+            <div className="bg-white p-6 rounded-sm border border-gray-200"><div className="flex items-center gap-3 mb-2"><div className="w-10 h-10 bg-purple-100 rounded-sm flex items-center justify-center"><Calendar className="w-5 h-5 text-purple-600" /></div><div><div className="text-xs text-gray-500 uppercase">Takt Time Médio</div><div className="text-2xl font-bold text-gray-900">{(estatisticas.taktTimeMedio * 60).toFixed(1)}s</div></div></div></div>
           </div>
 
           <div className="bg-white p-5 rounded-sm border border-gray-200">
             <div className="flex items-center gap-4 flex-wrap">
               <Filter className="w-5 h-5 text-gray-600" />
               <span className="text-sm font-semibold text-gray-900">Filtros:</span>
-              <Select value={filtroMetodo} onValueChange={setFiltroMetodo}><SelectTrigger className="w-[210px] rounded-sm text-sm"><SelectValue placeholder="Todos os metodos" /></SelectTrigger><SelectContent className="rounded-sm"><SelectItem value="all">Todos os metodos</SelectItem><SelectItem value="1">Distribuicao Ideal</SelectItem><SelectItem value="2">Por Quantidade</SelectItem><SelectItem value="3">N Fixo Operadores</SelectItem></SelectContent></Select>
+              <Select value={filtroMetodo} onValueChange={setFiltroMetodo}><SelectTrigger className="w-[210px] rounded-sm text-sm"><SelectValue placeholder="Todos os métodos" /></SelectTrigger><SelectContent className="rounded-sm"><SelectItem value="all">Todos os métodos</SelectItem><SelectItem value="1">Distribuição Ideal</SelectItem><SelectItem value="2">Por Quantidade</SelectItem><SelectItem value="3">N Fixo Operadores</SelectItem></SelectContent></Select>
               <Select value={filtroOperador} onValueChange={setFiltroOperador}><SelectTrigger className="w-[210px] rounded-sm text-sm"><SelectValue placeholder="Todos os operadores" /></SelectTrigger><SelectContent className="rounded-sm"><SelectItem value="all">Todos os operadores</SelectItem>{operadoresUnicos.map((op) => <SelectItem key={op} value={op.toString()}>{op} Operador(es)</SelectItem>)}</SelectContent></Select>
-              <Select value={filtroFichaTecnica} onValueChange={setFiltroFichaTecnica}><SelectTrigger className="w-[300px] rounded-sm text-sm"><SelectValue placeholder="Todas as fichas tecnicas" /></SelectTrigger><SelectContent className="rounded-sm"><SelectItem value="all">Todas as fichas tecnicas</SelectItem>{fichasTecnicasUnicas.map(([id, nome]) => <SelectItem key={id} value={id}>{nome}</SelectItem>)}</SelectContent></Select>
-              <Input value={filtroTaskCode} onChange={(e) => setFiltroTaskCode(e.target.value)} placeholder="task_code (API)" className="w-[200px] rounded-sm text-sm" />
-              {(filtroMetodo !== "all" || filtroOperador !== "all" || filtroFichaTecnica !== "all" || filtroTaskCode.trim() !== "") && (
-                <Button variant="ghost" size="sm" onClick={() => { setFiltroMetodo("all"); setFiltroOperador("all"); setFiltroFichaTecnica("all"); setFiltroTaskCode(""); }} className="text-xs"><X className="w-3 h-3 mr-1" />Limpar Filtros</Button>
+              <Input value={pesquisaFichaTecnica} onChange={(e) => setPesquisaFichaTecnica(e.target.value)} placeholder="Pesquisar por ficha técnica (nome ou referência)" className="w-[320px] rounded-sm text-sm" />
+              {(filtroMetodo !== "all" || filtroOperador !== "all" || pesquisaFichaTecnica.trim() !== "") && (
+                <Button variant="ghost" size="sm" onClick={() => { setFiltroMetodo("all"); setFiltroOperador("all"); setPesquisaFichaTecnica(""); }} className="text-xs"><X className="w-3 h-3 mr-1" />Limpar filtros</Button>
               )}
             </div>
           </div>
@@ -521,9 +513,9 @@ export default function Historico() {
           {comparar.length > 0 && (
             <div className="bg-blue-50 p-6 rounded-sm border-2 border-blue-200">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-base font-semibold text-blue-900">Comparacao ({comparar.length}/3)</h3>
+                <h3 className="text-base font-semibold text-blue-900">Comparação ({comparar.length}/3)</h3>
                 <Button variant="ghost" size="sm" onClick={() => setComparar([])} className="text-blue-700 hover:text-blue-800 hover:bg-blue-100">
-                  <X className="w-4 h-4 mr-1" />Limpar Selecao
+                  <X className="w-4 h-4 mr-1" />Limpar seleção
                 </Button>
               </div>
               <div className="grid grid-cols-3 gap-4">
@@ -532,10 +524,10 @@ export default function Historico() {
                     <div className="text-xs font-mono text-blue-600 mb-1">{new Date(item.timestamp).toLocaleString("pt-PT")}</div>
                     <div className="text-sm font-semibold text-gray-900 mb-3">{item.produtoNome}</div>
                     <div className="space-y-2 text-xs">
-                      <div className="flex justify-between"><span className="text-gray-600">Metodo:</span><span className="font-semibold text-gray-900">{getMetodoNome(item.metodo)}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600">Método:</span><span className="font-semibold text-gray-900">{getMetodoNome(item.metodo)}</span></div>
                       <div className="flex justify-between"><span className="text-gray-600">Operadores:</span><span className="font-semibold text-gray-900">{item.resultados.numeroOperadores}</span></div>
                       <div className="flex justify-between"><span className="text-gray-600">Perdas:</span><span className="font-semibold text-orange-600">{(item.resultados.perdas || 0).toFixed(1)}%</span></div>
-                      <div className="flex justify-between"><span className="text-gray-600">OLE Medio:</span><span className="font-semibold text-green-600">{item.oleMedia.toFixed(1)}%</span></div>
+                      <div className="flex justify-between"><span className="text-gray-600">OLE Médio:</span><span className="font-semibold text-green-600">{item.oleMedia.toFixed(1)}%</span></div>
                       <div className="flex justify-between"><span className="text-gray-600">Takt Time:</span><span className="font-semibold text-gray-900">{((item.resultados.taktTime || 0) * 60).toFixed(1)}s</span></div>
                     </div>
                   </div>
@@ -547,11 +539,11 @@ export default function Historico() {
           {detalheSelecionado && (
             <div className="bg-white p-6 rounded-sm border border-gray-200 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-base font-semibold text-gray-900">Detalhe da Simulacao</h3>
-                <Button variant="ghost" size="sm" onClick={() => setDetalheSelecionado(null)} className="text-xs"><X className="w-3 h-3 mr-1" />Fechar Detalhe</Button>
+                <h3 className="text-base font-semibold text-gray-900">Detalhe da Simulação</h3>
+                <Button variant="ghost" size="sm" onClick={() => setDetalheSelecionado(null)} className="text-xs"><X className="w-3 h-3 mr-1" />Fechar detalhe</Button>
               </div>
               <div className="text-xs text-gray-500">
-                Task Code: <span className="font-mono text-gray-900">{pickString(detalheSelecionado.raw, ["task_code", "task_id", "code"]) || "-"}</span>
+                Ficha técnica: <span className="font-mono text-gray-900">{pickString(detalheSelecionado.raw, ["family_id", "family", "family_code"]) || "-"}</span>
               </div>
               <ResumoResultados resultados={detalheSelecionado.resultados} config={detalheSelecionado.config} />
               <div className="flex items-center justify-end">
@@ -576,17 +568,17 @@ export default function Historico() {
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase w-10">Comparar</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">Data/Hora</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">Ficha Tecnica</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">Metodo</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">Operadores</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">OLE Medio</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">Perdas</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">Takt Time</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase">Ciclos/Hora</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase w-20">Detalhes</th>
-                    <th className="p-3 text-left text-xs font-semibold text-gray-600 uppercase w-10">Acoes</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600 w-10">Comparar</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600">Data/Hora</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600">Ficha técnica</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600">Método</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600">Operadores</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600">OLE médio</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600">Perdas</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600">Takt Time</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600">Ciclos/Hora</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600 w-20">Detalhes</th>
+                    <th className="p-3 text-left text-xs font-semibold text-gray-600 w-10">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -612,16 +604,16 @@ export default function Historico() {
 
           {dadosGrafico.length > 1 && (
             <div className="bg-white p-6 rounded-sm border border-gray-200">
-              <h3 className="text-base font-semibold text-gray-900 mb-4">Tendencia do OLE</h3>
+              <h3 className="text-base font-semibold text-gray-900 mb-4">Tendência do OLE</h3>
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={dadosGrafico} id="ole-trend-chart">
                   <CartesianGrid key="grid" strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis key="xaxis" dataKey="dataKey" stroke="#6b7280" style={{ fontSize: "12px" }} tickFormatter={(v) => v.split("_")[0]} />
                   <YAxis key="yaxis" stroke="#6b7280" style={{ fontSize: "12px" }} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
-                  <Tooltip key="tooltip" contentStyle={{ backgroundColor: "#fff", border: "1px solid #e5e7eb", borderRadius: "4px", fontSize: "12px" }} formatter={(value: any) => [`${Number(value).toFixed(1)}%`, "OLE Medio"]} />
+                  <Tooltip key="tooltip" contentStyle={{ backgroundColor: "#fff", border: "1px solid #e5e7eb", borderRadius: "4px", fontSize: "12px" }} formatter={(value: any) => [`${Number(value).toFixed(1)}%`, "OLE Médio"]} />
                   <Legend key="legend" wrapperStyle={{ fontSize: "12px" }} />
                   <ReferenceLine key="ref-85" y={85} stroke="#10b981" strokeDasharray="4 4" strokeWidth={1} />
-                  <Line key="line-ole" type="monotone" dataKey="ole" stroke="#10b981" name="OLE Medio (%)" strokeWidth={2.5} dot={{ r: 4, fill: "#10b981", strokeWidth: 2, stroke: "#fff" }} activeDot={{ r: 6, fill: "#10b981", strokeWidth: 2, stroke: "#fff" }} />
+                  <Line key="line-ole" type="monotone" dataKey="ole" stroke="#10b981" name="OLE Médio (%)" strokeWidth={2.5} dot={{ r: 4, fill: "#10b981", strokeWidth: 2, stroke: "#fff" }} activeDot={{ r: 6, fill: "#10b981", strokeWidth: 2, stroke: "#fff" }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>

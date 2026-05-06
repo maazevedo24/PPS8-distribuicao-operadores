@@ -4,6 +4,13 @@ import { DashboardResultados } from "../components/DashboardResultados";
 import { VisualizadorFluxo } from "../components/VisualizadorFluxo";
 import { ResumoResultados } from "../components/ResumoResultados";
 import { Button } from "../components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 import { ArrowLeft, Download, Printer, Calculator } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
@@ -60,6 +67,7 @@ export default function Resultados() {
   const [taskCode] = useState<string>(initialTaskCode);
   const [ajusteBodyBase, setAjusteBodyBase] = useState<any>(initialAjusteBodyBase);
   const [isAjustando, setIsAjustando] = useState(false);
+  const [erroPopup, setErroPopup] = useState<string | null>(null);
 
   const parseNumberLike = (value: unknown): number | null => {
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -181,7 +189,7 @@ export default function Resultados() {
   const handleConfirmarEdicao = useCallback(
     async (editedRows: any[]) => {
       if (!taskCode || !ajusteBodyBase) {
-        alert("Nao foi possivel ajustar: faltam task code ou payload base da chamada inicial.");
+        setErroPopup("Não foi possível ajustar: faltam dados base da chamada inicial.");
         return;
       }
       setIsAjustando(true);
@@ -197,7 +205,7 @@ export default function Resultados() {
         setAjusteBodyBase(novoRaw);
       } catch (error) {
         console.error("Erro ao ajustar alocacao:", error);
-        alert("Erro ao ajustar alocacao. Verifica os valores editados e tenta novamente.");
+        setErroPopup("Erro ao ajustar alocação. Verifica os valores editados e tenta novamente.");
         throw error;
       } finally {
         setIsAjustando(false);
@@ -237,6 +245,15 @@ export default function Resultados() {
 
   return (
     <div className="bg-gray-50">
+      <Dialog open={Boolean(erroPopup)} onOpenChange={(open) => { if (!open) setErroPopup(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Erro</DialogTitle>
+            <DialogDescription>{erroPopup || ""}</DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+
       {/* Header */}
       <div className="sticky top-[53px] z-40 bg-white border-b border-gray-200 print:hidden shadow-sm">
         <div className="w-full px-6 py-1.5">
