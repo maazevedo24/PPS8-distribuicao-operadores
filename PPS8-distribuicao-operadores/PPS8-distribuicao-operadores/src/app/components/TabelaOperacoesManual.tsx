@@ -1,4 +1,4 @@
-import { Operacao, Operador } from "../types";
+﻿import { Operacao, Operador } from "../types";
 import { useState, useCallback, useMemo } from "react";
 import { Plus, Trash2, UserCheck } from "lucide-react";
 import { Button } from "./ui/button";
@@ -51,7 +51,7 @@ export function TabelaOperacoesManual({
 }: TabelaOperacoesManualProps) {
   const [editing, setEditing] = useState<EditingCell>(null);
   const [localOps, setLocalOps] = useState<Operacao[]>(operacoes);
-  // Local free-text operador per operação id
+  // Local free-text operador per operaÃ§Ã£o id
   const [localOps_operador, setLocalOps_operador] = useState<{ [id: string]: string }>(() => {
     const init: { [id: string]: string } = {};
     operacoes.forEach((op) => {
@@ -207,7 +207,7 @@ export function TabelaOperacoesManual({
       const isEditing =
         editing?.rowIndex === rowIndex && editing?.field === field;
 
-      // ── Operador column (free text)
+      // â”€â”€ Operador column (free text)
       if (field === "operador") {
         const val = localOps_operador[op.id] || "";
         if (isEditing) {
@@ -229,14 +229,14 @@ export function TabelaOperacoesManual({
             className={`block w-full h-full px-2 py-1 text-xs cursor-text font-mono ${
               !val ? "text-gray-300" : "text-gray-800"
             }`}
-            onClick={() => setEditing({ rowIndex, field: "operador" })}
+            onDoubleClick={() => setEditing({ rowIndex, field: "operador" })}
           >
-            {val || "—"}
+            {val || "â€”"}
           </span>
         );
       }
 
-      // ── Sequência (read-only label)
+      // â”€â”€ SequÃªncia (read-only label)
       if (field === "sequencia") {
         return (
           <span className="text-gray-500 font-mono text-xs px-2 py-1 block">
@@ -245,7 +245,7 @@ export function TabelaOperacoesManual({
         );
       }
 
-      // ── All other fields
+      // â”€â”€ All other fields
       const value = op[field as keyof Operacao];
       const displayNumericValue =
         field === "tempo" && typeof value === "number" ? value * 60 : value;
@@ -286,11 +286,11 @@ export function TabelaOperacoesManual({
           className={`block w-full h-full px-2 py-1 text-xs cursor-text ${
             field === "tempo" || field === "largura" ? "font-mono" : ""
           } ${!displayValue ? "text-gray-300" : ""}`}
-          onClick={() =>
+          onDoubleClick={() =>
             setEditing({ rowIndex, field: field as keyof Operacao })
           }
         >
-          {displayValue || "—"}
+          {displayValue || "â€”"}
         </span>
       );
     },
@@ -316,7 +316,7 @@ export function TabelaOperacoesManual({
         <div className="flex items-center gap-4">
           <span className="text-xs text-gray-500">
             <span className="font-semibold text-gray-700">{localOps.length}</span>{" "}
-            operações
+            operaÃ§Ãµes
           </span>
           <span className="text-xs text-gray-500">
             Tempo total:{" "}
@@ -372,10 +372,10 @@ export function TabelaOperacoesManual({
               {[
                 "Seq",
                 "ID",
-                "Operação",
+                "OperaÃ§Ã£o",
                 "Tempo (s)",
-                "Máquina",
-                "Máquina 2",
+                "MÃ¡quina",
+                "MÃ¡quina 2",
                 "Largura",
                 "Ponto",
                 "Setup",
@@ -394,7 +394,7 @@ export function TabelaOperacoesManual({
                 </div>
               </th>
               <th className="p-2 text-center text-xs font-semibold text-gray-600 uppercase">
-                Ações
+                AÃ§Ãµes
               </th>
             </tr>
           </thead>
@@ -453,7 +453,7 @@ export function TabelaOperacoesManual({
                   colSpan={11}
                   className="p-8 text-center text-sm text-gray-400"
                 >
-                  Nenhuma operação. Clique em "Adicionar Linha" para começar.
+                  Nenhuma operaÃ§Ã£o. Clique em "Adicionar Linha" para comeÃ§ar.
                 </td>
               </tr>
             )}
@@ -487,15 +487,15 @@ export function TabelaOperacoesManual({
 
       {/* Dica */}
       <div className="text-xs text-gray-400">
-        Clique numa célula para editar ·{" "}
+        Duplo clique numa célula para editar Â·{" "}
         <kbd className="px-1 border border-gray-200 rounded-sm text-[9px] bg-white text-gray-500">
           Enter
         </kbd>{" "}
-        próxima linha ·{" "}
+        prÃ³xima linha Â·{" "}
         <kbd className="px-1 border border-gray-200 rounded-sm text-[9px] bg-white text-gray-500">
           Tab
         </kbd>{" "}
-        próxima coluna ·{" "}
+        prÃ³xima coluna Â·{" "}
         <kbd className="px-1 border border-gray-200 rounded-sm text-[9px] bg-white text-gray-500">
           Esc
         </kbd>{" "}
@@ -504,3 +504,4 @@ export function TabelaOperacoesManual({
     </div>
   );
 }
+

@@ -581,6 +581,18 @@ function TabelaAllocacoes({
     }
   };
 
+  const startEditFromCell = (
+    rowIndex: number,
+    columnKey: string,
+    value: number | null | undefined
+  ) => {
+    if (!onConfirmarEdicao || isEditing || isSaving || isAjustando || viewMode !== "tempo") return;
+    setDraftRows(structuredClone(baseRows));
+    setIsEditing(true);
+    setActiveCell({ rowIndex, columnKey });
+    setActiveCellValue(value == null ? "" : String(value));
+  };
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -652,20 +664,7 @@ function TabelaAllocacoes({
                   <span className="text-[10px] text-gray-400 shrink-0">A ajustar...</span>
                 )}
               </>
-            ) : (
-              <Button
-                type="button"
-                size="sm"
-                className="h-6 px-2 text-[10px]"
-                onClick={() => {
-                  setDraftRows(structuredClone(baseRows));
-                  setIsEditing(true);
-                }}
-                disabled={viewMode !== "tempo" || isAjustando}
-              >
-                Editar
-              </Button>
-            )
+            ) : null
           ) : null}
           {isEditing && !isSaving && !isAjustando ? (
             <span className="text-[10px] text-gray-400 shrink-0">Enter ou clicar fora para confirmar</span>
@@ -751,9 +750,11 @@ function TabelaAllocacoes({
                           fontWeight: 600,
                           color: editable ? "#2563eb" : value == null ? "#d1d5db" : "#2563eb",
                         })}
+                        onDoubleClick={() => startEditFromCell(index, column.key, value)}
                       >
                         {editable ? (
                           <input
+                            autoFocus={activeCell?.rowIndex === index && activeCell?.columnKey === column.key}
                             type="text"
                             inputMode="decimal"
                             value={
